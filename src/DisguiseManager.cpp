@@ -86,6 +86,8 @@ namespace DisguiseManager {
         }
     }
 
+    static bool g_playerWasInCombat = false;
+
     // ====================== MAIN EVALUATION ======================
 
     void Evaluate() {
@@ -147,7 +149,24 @@ namespace DisguiseManager {
 
     void UpdateTimers() {
         const float now = GetCurrentGameTimeSeconds();
+        auto player = RE::PlayerCharacter::GetSingleton();
 
+        // ===== Combat End Detection (reliable) =====
+        if (player) {
+            bool isInCombat = player->IsInCombat();
+
+            if (g_playerWasInCombat && !isInCombat) {
+                // Player just left combat
+                if (Configuration::DebugMode) {
+                    logger::info("Player left combat → re-evaluating disguise");
+                }
+                OnCombatEnd();
+            }
+
+            g_playerWasInCombat = isInCombat;
+        }
+
+        // ===== Normal timer expiration =====
         for (auto& [formID, state] : ActiveDisguises) {
             if (state.isActive && state.removeAtGameTime > 0.0f && now >= state.removeAtGameTime) {
                 if (Configuration::DebugMode) {
@@ -191,33 +210,6 @@ namespace DisguiseManager {
     };
 
     static EquipEventSink g_equipSink;
-
-// ====================== COMBAT EVENT ======================
-
-    class CombatEventSink : public RE::BSTEventSink<RE::TESCombatEvent> {
-    public:
-        RE::BSEventNotifyControl ProcessEvent(const RE::TESCombatEvent* ev, RE::BSTEventSource<RE::TESCombatEvent>*) override {
-            if (!ev) return RE::BSEventNotifyControl::kContinue;
-
-            auto player = RE::PlayerCharacter::GetSingleton();
-            if (!player) return RE::BSEventNotifyControl::kContinue;
-
-            bool playerInvolved = (ev->actor.get() == player) || (ev->targetActor.get() == player);
-            if (!playerInvolved) return RE::BSEventNotifyControl::kContinue;
-
-            if (ev->newState == RE::ACTOR_COMBAT_STATE::kNone) {
-                if (Configuration::DebugMode) {
-                    logger::info("Combat ended (player involved) → re-evaluating disguise");
-                }
-
-                SKSE::GetTaskInterface()->AddTask([]() { OnCombatEnd(); });
-            }
-
-            return RE::BSEventNotifyControl::kContinue;
-        }
-    };
-
-    static CombatEventSink g_combatSink;
 
     // ====================== HIT EVENT (attack detection) ======================
 
@@ -267,7 +259,6 @@ namespace DisguiseManager {
         auto source = RE::ScriptEventSourceHolder::GetSingleton();
         if (source) {
             source->AddEventSink<RE::TESEquipEvent>(&g_equipSink);
-            source->AddEventSink<RE::TESCombatEvent>(&g_combatSink);
             source->AddEventSink<RE::TESHitEvent>(&g_hitSink);
             logger::info("Equip + Combat + Hit event sinks registered");
         }
