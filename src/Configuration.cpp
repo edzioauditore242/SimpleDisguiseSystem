@@ -43,7 +43,7 @@ namespace Configuration {
                 out << "DebugMode = false\n\n";
                 out << "[Disguise]\n";
                 out << "; Format: Keyword1,Keyword2,Keyword3|FactionEditorID\n";
-                out << "Keywords = ArmorMaterialHideCuirass,ArmorMaterialHideBoots,ArmorMaterialHideGauntlets|BanditAllyFaction\n";
+                out << "Keywords = ArmorMaterialHideCuirass,ArmorMaterialHideBoots,ArmorMaterialHideGauntlets|BanditFaction\n";
                 out.close();
             }
             return;

@@ -140,7 +140,7 @@ namespace DisguiseManager {
                     state.isActive = false;
                     state.removeAtGameTime = -1.0f;
                 } else {
-                    // Normal gameplay: start timer if we previously applied it
+                    // Normal gameplay: start timer if previously applied
                     if (state.isActive && state.removeAtGameTime < 0.0f) {
                         state.removeAtGameTime = now + Configuration::TimeoutDuration;
                         if (Configuration::DebugMode) {
@@ -162,7 +162,7 @@ namespace DisguiseManager {
         const float now = GetCurrentGameTimeSeconds();
         auto player = RE::PlayerCharacter::GetSingleton();
 
-        // ===== Combat End Detection (with anti-loop protection) =====
+        // ===== Combat End Detection =====
         static float lastCombatEndTime = -9999.0f;
 
         if (player) {
@@ -172,7 +172,7 @@ namespace DisguiseManager {
                 // Only trigger if enough time has passed since the last combat-end
                 if (now - lastCombatEndTime > 3.0f) {  // 3 game seconds cooldown
                     lastCombatEndTime = now;
-                    g_playerWasInCombat = false;  // set flag FIRST
+                    g_playerWasInCombat = false;
 
                     if (Configuration::DebugMode) {
                         logger::info("Player left combat → re-evaluating disguise");
@@ -246,7 +246,7 @@ namespace DisguiseManager {
                 return RE::BSEventNotifyControl::kContinue;
             }
 
-            // Check if we are currently disguised as any faction that the target belongs to
+            // Check if currently disguised as any faction that the target belongs to
             for (auto& [formID, state] : ActiveDisguises) {
                 if (state.isActive && state.faction && target->IsInFaction(state.faction)) {
                     if (Configuration::DebugMode) {

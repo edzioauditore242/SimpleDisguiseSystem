@@ -40,7 +40,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     SKSE::GetMessagingInterface()->RegisterListener(OnMessage);
 
     SetupLog();
-    logger::info("Simple Disguise System – Rework started");
+    logger::info("Simple Disguise System Started");
 
     Configuration::Load();
     Translation::Load();
