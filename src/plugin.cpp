@@ -2,16 +2,17 @@
 
 #include <chrono>
 #include <thread>
-#include "Translation.h"
+
 #include "Configuration.h"
 #include "DisguiseManager.h"
+#include "Translation.h"
 
 static void DelayedEvaluate() {
     std::thread([]() {
         std::this_thread::sleep_for(std::chrono::seconds(4));
         SKSE::GetTaskInterface()->AddTask([]() {
             logger::info("Running delayed evaluation after load");
-            DisguiseManager::Evaluate();
+            DisguiseManager::Evaluate(true);  // true = load evaluation
         });
     }).detach();
 }
@@ -26,7 +27,6 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
 
         case SKSE::MessagingInterface::kPostLoadGame:
             logger::info("Save loaded – preparing delayed evaluation");
-            // Forms are already resolved, just re-evaluate after a short delay
             DelayedEvaluate();
             break;
 

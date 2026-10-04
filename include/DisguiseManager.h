@@ -13,7 +13,7 @@ namespace DisguiseManager {
 
     inline std::unordered_map<RE::FormID, ActiveDisguise> ActiveDisguises;
 
-    void Evaluate();
+    void Evaluate(bool isLoadEvaluation = false);
     void UpdateTimers();
     void OnCombatEnd();
     void Register();

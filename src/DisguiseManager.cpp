@@ -90,12 +90,13 @@ namespace DisguiseManager {
 
     // ====================== MAIN EVALUATION ======================
 
-    void Evaluate() {
+
+    void Evaluate(bool isLoadEvaluation) {
         auto player = RE::PlayerCharacter::GetSingleton();
         if (!player) return;
 
         if (Configuration::DebugMode) {
-            logger::info("=== Running Disguise Evaluation ===");
+            logger::info("=== Running Disguise Evaluation {}===", isLoadEvaluation ? "(LOAD) " : "");
         }
 
         const float now = GetCurrentGameTimeSeconds();
@@ -115,7 +116,6 @@ namespace DisguiseManager {
             }
 
             if (conditionMet) {
-                // Cancel any running timer
                 if (state.removeAtGameTime > 0.0f) {
                     state.removeAtGameTime = -1.0f;
                     if (Configuration::DebugMode) {
@@ -123,18 +123,29 @@ namespace DisguiseManager {
                     }
                 }
 
-                // Make sure the faction is applied
                 if (!state.isActive || !player->IsInFaction(entry.faction)) {
                     ApplyToPlayerAndFollowers(entry.faction, true);
                     state.isActive = true;
                 }
-            } 
-            else {
-                // Condition is false
-                if (state.isActive && state.removeAtGameTime < 0.0f) {
-                    state.removeAtGameTime = now + Configuration::TimeoutDuration;
-                    if (Configuration::DebugMode) {
-                        logger::info("  → Started removal timer ({:.0f} game seconds)", Configuration::TimeoutDuration);
+            } else {
+                // Condition is NOT met
+                if (isLoadEvaluation) {
+                    // On load: remove immediately if the player has the faction
+                    if (player->IsInFaction(entry.faction)) {
+                        if (Configuration::DebugMode) {
+                            logger::info("  → Load evaluation: condition not met → removing faction immediately");
+                        }
+                        ApplyToPlayerAndFollowers(entry.faction, false);
+                    }
+                    state.isActive = false;
+                    state.removeAtGameTime = -1.0f;
+                } else {
+                    // Normal gameplay: start timer if we previously applied it
+                    if (state.isActive && state.removeAtGameTime < 0.0f) {
+                        state.removeAtGameTime = now + Configuration::TimeoutDuration;
+                        if (Configuration::DebugMode) {
+                            logger::info("  → Started removal timer ({:.0f} game seconds)", Configuration::TimeoutDuration);
+                        }
                     }
                 }
             }
