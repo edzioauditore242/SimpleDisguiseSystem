@@ -6,10 +6,11 @@
 #include "Configuration.h"
 #include "DisguiseManager.h"
 #include "Logger.h"
+#include "Translation.h"
 
 namespace UI {
-    // Helper: save current DebugMode back to the INI
-    static void SaveDebugModeToIni() {
+    // Helper to save General settings back to INI
+    static void SaveGeneralSettings() {
         if (!std::filesystem::exists(Configuration::IniPath)) {
             logger::error("Cannot save – INI file not found");
             return;
@@ -20,27 +21,58 @@ namespace UI {
 
         std::stringstream buffer;
         std::string line;
-        bool found = false;
+        bool inGeneral = false;
+        bool timeoutWritten = false;
+        bool followerWritten = false;
+        bool debugWritten = false;
 
         while (std::getline(in, line)) {
-            if (line.find("DebugMode") != std::string::npos && line.find("=") != std::string::npos) {
-                buffer << "DebugMode = " << (Configuration::DebugMode ? "true" : "false") << "\n";
-                found = true;
-            } else {
+            std::string trimmed = line;
+            // crude section detection
+            if (trimmed.find("[General]") != std::string::npos) {
+                inGeneral = true;
                 buffer << line << "\n";
+                continue;
             }
+            if (trimmed.find("[") != std::string::npos && trimmed.find("]") != std::string::npos) {
+                inGeneral = false;
+            }
+
+            if (inGeneral) {
+                if (trimmed.find("TimeoutDuration") != std::string::npos) {
+                    buffer << "TimeoutDuration = " << Configuration::TimeoutDuration << "\n";
+                    timeoutWritten = true;
+                    continue;
+                }
+                if (trimmed.find("FollowerSupport") != std::string::npos) {
+                    buffer << "FollowerSupport = " << (Configuration::FollowerSupport ? "true" : "false") << "\n";
+                    followerWritten = true;
+                    continue;
+                }
+                if (trimmed.find("DebugMode") != std::string::npos) {
+                    buffer << "DebugMode = " << (Configuration::DebugMode ? "true" : "false") << "\n";
+                    debugWritten = true;
+                    continue;
+                }
+            }
+
+            buffer << line << "\n";
         }
         in.close();
 
-        if (!found) {
-            buffer << "\n[General]\nDebugMode = " << (Configuration::DebugMode ? "true" : "false") << "\n";
+        // If some keys were missing, append them
+        if (!timeoutWritten || !followerWritten || !debugWritten) {
+            buffer << "\n[General]\n";
+            if (!timeoutWritten) buffer << "TimeoutDuration = " << Configuration::TimeoutDuration << "\n";
+            if (!followerWritten) buffer << "FollowerSupport = " << (Configuration::FollowerSupport ? "true" : "false") << "\n";
+            if (!debugWritten) buffer << "DebugMode = " << (Configuration::DebugMode ? "true" : "false") << "\n";
         }
 
         std::ofstream out(Configuration::IniPath);
         if (out.is_open()) {
             out << buffer.str();
             out.close();
-            logger::info("DebugMode saved to INI: {}", Configuration::DebugMode);
+            logger::info("General settings saved to INI");
         }
     }
 
@@ -50,86 +82,100 @@ namespace UI {
             return;
         }
 
+        Translation::Load();
+
         SKSEMenuFramework::SetSection("Simple Disguise System");
-        SKSEMenuFramework::AddSectionItem("Settings", RenderSettings);
-        SKSEMenuFramework::AddSectionItem("Debug", RenderDebug);
+        SKSEMenuFramework::AddSectionItem(Translation::Get("Menu_Settings"), RenderSettings);
+        SKSEMenuFramework::AddSectionItem(Translation::Get("Menu_Debug"), RenderDebug);
 
         logger::info("Menu Framework section registered");
     }
 
     // ======================== SETTINGS PAGE ========================
     void __stdcall RenderSettings() {
-        ImGuiMCP::Text("Simple Disguise System - Settings");
+        ImGuiMCP::Text("%s", Translation::Get("Settings_Title"));
         ImGuiMCP::Separator();
-        ImGuiMCP::Text("Entries currently loaded from INI:");
+
+        // TimeoutDuration
+        ImGuiMCP::Text("%s", Translation::Get("Settings_Timeout"));
+        ImGuiMCP::SliderFloat("##TimeoutDuration", &Configuration::TimeoutDuration, 10.0f, 6000.0f, "%.0f");
+
         ImGuiMCP::Spacing();
 
-        if (Configuration::DisguiseEntries.empty()) {
-            ImGuiMCP::TextColored(ImGuiMCP::ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "No disguise entries loaded.");
-        } else {
-            for (size_t i = 0; i < Configuration::DisguiseEntries.size(); ++i) {
-                auto& entry = Configuration::DisguiseEntries[i];
-
-                ImGuiMCP::Text("Entry #%zu", i + 1);
-                ImGuiMCP::BulletText("Keywords (%zu required):", entry.keywords.size());
-                for (const auto& kw : entry.keywords) {
-                    ImGuiMCP::BulletText("   %s", kw.c_str());
-                }
-                ImGuiMCP::BulletText("Faction: %s", entry.factionEditorID.c_str());
-
-                if (entry.faction) {
-                    ImGuiMCP::TextColored(ImGuiMCP::ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "Faction form: OK");
-                } else {
-                    ImGuiMCP::TextColored(ImGuiMCP::ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Faction form: MISSING!");
-                }
-
-                ImGuiMCP::Separator();
-            }
+        // FollowerSupport
+        bool follower = Configuration::FollowerSupport;
+        if (ImGuiMCP::Checkbox(Translation::Get("Settings_FollowerSupport"), &follower)) {
+            Configuration::FollowerSupport = follower;
         }
 
         ImGuiMCP::Spacing();
         ImGuiMCP::Separator();
         ImGuiMCP::Spacing();
 
-        if (ImGuiMCP::Button("Reload INI from disk")) {
+        if (ImGuiMCP::Button(Translation::Get("Settings_Save"))) {
+            SaveGeneralSettings();
+        }
+
+        ImGuiMCP::SameLine();
+        if (ImGuiMCP::Button(Translation::Get("Settings_ReloadINI"))) {
             logger::info("Reloading INI requested from menu");
             Configuration::Load();
             Configuration::ResolveForms();
             DisguiseManager::Evaluate();
         }
 
-        ImGuiMCP::SameLine();
+        ImGuiMCP::Spacing();
+        ImGuiMCP::Separator();
+        ImGuiMCP::Text("%s", Translation::Get("Settings_Entries"));
+        ImGuiMCP::Spacing();
 
-        if (ImGuiMCP::Button("Force Evaluate Now")) {
-            logger::info("Force Evaluate requested from Settings");
-            DisguiseManager::Evaluate();
+        if (Configuration::DisguiseEntries.empty()) {
+            ImGuiMCP::TextColored(ImGuiMCP::ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s", Translation::Get("Settings_NoEntries"));
+        } else {
+            for (size_t i = 0; i < Configuration::DisguiseEntries.size(); ++i) {
+                auto& entry = Configuration::DisguiseEntries[i];
+
+                ImGuiMCP::Text("%s #%zu", Translation::Get("Settings_Entry"), i + 1);
+                ImGuiMCP::BulletText("%s (%zu):", Translation::Get("Settings_Keywords"), entry.keywords.size());
+                for (const auto& kw : entry.keywords) {
+                    ImGuiMCP::BulletText("   %s", kw.c_str());
+                }
+                ImGuiMCP::BulletText("%s: %s", Translation::Get("Settings_Faction"), entry.factionEditorID.c_str());
+
+                if (entry.faction) {
+                    ImGuiMCP::TextColored(ImGuiMCP::ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "%s", Translation::Get("Settings_FormOK"));
+                } else {
+                    ImGuiMCP::TextColored(ImGuiMCP::ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s", Translation::Get("Settings_FormMissing"));
+                }
+
+                ImGuiMCP::Separator();
+            }
         }
     }
 
     // ======================== DEBUG PAGE ========================
     void __stdcall RenderDebug() {
-        ImGuiMCP::Text("Simple Disguise System - Debug");
+        ImGuiMCP::Text("%s", Translation::Get("Debug_Title"));
         ImGuiMCP::Separator();
 
-        // DebugMode toggle + Save button
         bool debug = Configuration::DebugMode;
-        if (ImGuiMCP::Checkbox("Enable Debug Mode (verbose logging)", &debug)) {
+        if (ImGuiMCP::Checkbox(Translation::Get("Debug_Enable"), &debug)) {
             Configuration::DebugMode = debug;
         }
 
         ImGuiMCP::SameLine();
-        if (ImGuiMCP::Button("Save DebugMode to INI")) {
-            SaveDebugModeToIni();
+        if (ImGuiMCP::Button(Translation::Get("Debug_Save"))) {
+            SaveGeneralSettings();
         }
 
         ImGuiMCP::Spacing();
         ImGuiMCP::Separator();
-        ImGuiMCP::Text("Live status:");
+        ImGuiMCP::Text("%s", Translation::Get("Debug_LiveStatus"));
         ImGuiMCP::Spacing();
 
         auto player = RE::PlayerCharacter::GetSingleton();
         if (!player) {
-            ImGuiMCP::Text("Player not available");
+            ImGuiMCP::Text("%s", Translation::Get("Debug_NoPlayer"));
             return;
         }
 
@@ -137,14 +183,17 @@ namespace UI {
             if (!entry.faction) continue;
 
             bool inFaction = player->IsInFaction(entry.faction);
+            auto it = DisguiseManager::ActiveDisguises.find(entry.faction->GetFormID());
+            bool isActive = (it != DisguiseManager::ActiveDisguises.end()) ? it->second.isActive : false;
 
             ImGuiMCP::Text("%s", entry.factionEditorID.c_str());
-            ImGuiMCP::BulletText("Currently in faction : %s", inFaction ? "YES" : "no");
+            ImGuiMCP::BulletText("%s: %s", Translation::Get("Debug_InFaction"), inFaction ? "YES" : "no");
+            ImGuiMCP::BulletText("%s: %s", Translation::Get("Debug_ModActive"), isActive ? "YES" : "no");
             ImGuiMCP::Separator();
         }
 
         ImGuiMCP::Spacing();
-        if (ImGuiMCP::Button("Force Full Evaluation")) {
+        if (ImGuiMCP::Button(Translation::Get("Debug_ForceEvaluate"))) {
             logger::info("Force Evaluate requested from Debug page");
             DisguiseManager::Evaluate();
         }

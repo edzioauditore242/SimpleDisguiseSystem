@@ -2,7 +2,7 @@
 
 #include <chrono>
 #include <thread>
-
+#include "Translation.h"
 #include "Configuration.h"
 #include "DisguiseManager.h"
 
@@ -43,6 +43,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     logger::info("Simple Disguise System – Rework started");
 
     Configuration::Load();
+    Translation::Load();
     DisguiseManager::Register();
     UI::Register();
 
