@@ -151,19 +151,26 @@ namespace DisguiseManager {
         const float now = GetCurrentGameTimeSeconds();
         auto player = RE::PlayerCharacter::GetSingleton();
 
-        // ===== Combat End Detection (reliable) =====
+        // ===== Combat End Detection (with anti-loop protection) =====
+        static float lastCombatEndTime = -9999.0f;
+
         if (player) {
             bool isInCombat = player->IsInCombat();
 
             if (g_playerWasInCombat && !isInCombat) {
-                // Player just left combat
-                if (Configuration::DebugMode) {
-                    logger::info("Player left combat → re-evaluating disguise");
-                }
-                OnCombatEnd();
-            }
+                // Only trigger if enough time has passed since the last combat-end
+                if (now - lastCombatEndTime > 3.0f) {  // 3 game seconds cooldown
+                    lastCombatEndTime = now;
+                    g_playerWasInCombat = false;  // set flag FIRST
 
-            g_playerWasInCombat = isInCombat;
+                    if (Configuration::DebugMode) {
+                        logger::info("Player left combat → re-evaluating disguise");
+                    }
+                    OnCombatEnd();
+                }
+            } else {
+                g_playerWasInCombat = isInCombat;
+            }
         }
 
         // ===== Normal timer expiration =====
@@ -212,7 +219,6 @@ namespace DisguiseManager {
     static EquipEventSink g_equipSink;
 
     // ====================== HIT EVENT (attack detection) ======================
-
     class HitEventSink : public RE::BSTEventSink<RE::TESHitEvent> {
     public:
         RE::BSEventNotifyControl ProcessEvent(const RE::TESHitEvent* ev, RE::BSTEventSource<RE::TESHitEvent>*) override {
@@ -224,23 +230,25 @@ namespace DisguiseManager {
             auto target = ev->target->As<RE::Actor>();
             if (!target) return RE::BSEventNotifyControl::kContinue;
 
+            // Ignore dead bodies
+            if (target->IsDead()) {
+                return RE::BSEventNotifyControl::kContinue;
+            }
+
             // Check if we are currently disguised as any faction that the target belongs to
             for (auto& [formID, state] : ActiveDisguises) {
                 if (state.isActive && state.faction && target->IsInFaction(state.faction)) {
                     if (Configuration::DebugMode) {
                         logger::info("Player attacked member of active disguise faction → removing disguise immediately");
                     }
-
                     ApplyToPlayerAndFollowers(state.faction, false);
                     state.isActive = false;
                     state.removeAtGameTime = -1.0f;
                 }
             }
-
             return RE::BSEventNotifyControl::kContinue;
         }
     };
-
     static HitEventSink g_hitSink;
 
     // ====================== PERIODIC TIMER CHECK ======================
