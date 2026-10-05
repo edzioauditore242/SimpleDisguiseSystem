@@ -2,7 +2,7 @@
 
 #include <fstream>
 #include <sstream>
-
+#include <unordered_map>
 #include "Configuration.h"
 #include "DisguiseManager.h"
 #include "Logger.h"
@@ -179,14 +179,19 @@ namespace UI {
             return;
         }
 
+        std::unordered_map<RE::FormID, Configuration::DisguiseEntry*> uniqueFactions;
         for (auto& entry : Configuration::DisguiseEntries) {
-            if (!entry.faction) continue;
+            if (entry.faction) {
+                uniqueFactions[entry.faction->GetFormID()] = &entry;
+            }
+        }
 
-            bool inFaction = player->IsInFaction(entry.faction);
-            auto it = DisguiseManager::ActiveDisguises.find(entry.faction->GetFormID());
+        for (auto& [formID, entry] : uniqueFactions) {
+            bool inFaction = player->IsInFaction(entry->faction);
+            auto it = DisguiseManager::ActiveDisguises.find(formID);
             bool isActive = (it != DisguiseManager::ActiveDisguises.end()) ? it->second.isActive : false;
 
-            ImGuiMCP::Text("%s", entry.factionEditorID.c_str());
+            ImGuiMCP::Text("%s", entry->factionEditorID.c_str());
             ImGuiMCP::BulletText("%s: %s", Translation::Get("Debug_InFaction"), inFaction ? "YES" : "no");
             ImGuiMCP::BulletText("%s: %s", Translation::Get("Debug_ModActive"), isActive ? "YES" : "no");
             ImGuiMCP::Separator();

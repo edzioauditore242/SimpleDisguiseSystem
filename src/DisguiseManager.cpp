@@ -101,21 +101,50 @@ namespace DisguiseManager {
 
         const float now = GetCurrentGameTimeSeconds();
 
+        // Group entries by faction FormID
+        // Key = faction FormID, Value = list of keyword groups for that faction
+        std::unordered_map<RE::FormID, std::vector<const Configuration::DisguiseEntry*>> factionGroups;
+
         for (auto& entry : Configuration::DisguiseEntries) {
             if (!entry.faction) continue;
+            factionGroups[entry.faction->GetFormID()].push_back(&entry);
+        }
 
-            const int required = static_cast<int>(entry.keywords.size());
-            const int worn = CountWornKeywords(player, entry.keywords);
-            const bool conditionMet = (worn >= required);
+        for (auto& [formID, group] : factionGroups) {
+            RE::TESFaction* faction = group[0]->faction;
+            const std::string& factionEditorID = group[0]->factionEditorID;
 
-            auto& state = ActiveDisguises[entry.faction->GetFormID()];
-            state.faction = entry.faction;
+            // A faction condition is met if ANY keyword group is fully worn
+            bool conditionMet = false;
+            int bestWorn = 0;
+            int bestRequired = 0;
+
+            for (auto* entry : group) {
+                const int required = static_cast<int>(entry->keywords.size());
+                const int worn = CountWornKeywords(player, entry->keywords);
+
+                if (worn > bestWorn) {
+                    bestWorn = worn;
+                    bestRequired = required;
+                }
+
+                if (worn >= required) {
+                    conditionMet = true;
+                    bestWorn = worn;
+                    bestRequired = required;
+                    // no break – we still want the best numbers for logging
+                }
+            }
+
+            auto& state = ActiveDisguises[formID];
+            state.faction = faction;
 
             if (Configuration::DebugMode) {
-                logger::info("Faction: {} | Worn: {}/{} | Condition: {} | Active: {} | Timer: {}", entry.factionEditorID, worn, required, conditionMet, state.isActive, state.removeAtGameTime > 0.0f ? "YES" : "no");
+                logger::info("Faction: {} | Best Worn: {}/{} | Condition: {} | Active: {} | Timer: {}", factionEditorID, bestWorn, bestRequired, conditionMet, state.isActive, state.removeAtGameTime > 0.0f ? "YES" : "no");
             }
 
             if (conditionMet) {
+                // Cancel any running timer
                 if (state.removeAtGameTime > 0.0f) {
                     state.removeAtGameTime = -1.0f;
                     if (Configuration::DebugMode) {
@@ -123,24 +152,23 @@ namespace DisguiseManager {
                     }
                 }
 
-                if (!state.isActive || !player->IsInFaction(entry.faction)) {
-                    ApplyToPlayerAndFollowers(entry.faction, true);
+                // Make sure the faction is applied
+                if (!state.isActive || !player->IsInFaction(faction)) {
+                    ApplyToPlayerAndFollowers(faction, true);
                     state.isActive = true;
                 }
             } else {
-                // Condition is NOT met
+                // Condition is NOT met for this faction
                 if (isLoadEvaluation) {
-                    // On load: remove immediately if the player has the faction
-                    if (player->IsInFaction(entry.faction)) {
+                    if (player->IsInFaction(faction)) {
                         if (Configuration::DebugMode) {
                             logger::info("  → Load evaluation: condition not met → removing faction immediately");
                         }
-                        ApplyToPlayerAndFollowers(entry.faction, false);
+                        ApplyToPlayerAndFollowers(faction, false);
                     }
                     state.isActive = false;
                     state.removeAtGameTime = -1.0f;
                 } else {
-                    // Normal gameplay: start timer if previously applied
                     if (state.isActive && state.removeAtGameTime < 0.0f) {
                         state.removeAtGameTime = now + Configuration::TimeoutDuration;
                         if (Configuration::DebugMode) {
