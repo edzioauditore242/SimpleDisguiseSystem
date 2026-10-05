@@ -1,4 +1,4 @@
-# SimpleDisguiseSystem
+# Simple Disguise System
 Disguise and Blend into hostile area by wearing faction specific armor. Simple and Easy.
 
 Simple Disguise System - SDS is a mod that enables player to disguise as hostile faction and infiltrate the enemy base.
