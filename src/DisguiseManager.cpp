@@ -2,11 +2,14 @@
 
 #include <chrono>
 #include <thread>
-
+#include <unordered_map>
+#include <format>
 #include "Configuration.h"
 #include "Logger.h"
 
 namespace DisguiseManager {
+    static bool g_playerWasInCombat = false;
+
     // ====================== HELPERS ======================
 
     static float GetCurrentGameTimeSeconds() {
@@ -39,12 +42,31 @@ namespace DisguiseManager {
         return count;
     }
 
+    static std::string GetFactionLabel(RE::TESFaction* faction) {
+        if (!faction) return "<null>";
+
+        // Prefer full name if it exists
+        const char* fullName = faction->GetFullName();
+        if (fullName && fullName[0] != '\0') {
+            return fullName;
+        }
+
+        // Fallback to EditorID
+        const char* editorID = faction->GetFormEditorID();
+        if (editorID && editorID[0] != '\0') {
+            return editorID;
+        }
+
+        // Last fallback
+        return std::format("FormID:{:08X}", faction->GetFormID());
+    }
+
     static void AddFactionToActor(RE::Actor* actor, RE::TESFaction* faction) {
         if (!actor || !faction) return;
         if (!actor->IsInFaction(faction)) {
             actor->AddToFaction(faction, 0);
             if (Configuration::DebugMode) {
-                logger::info("Added faction {} to {}", faction->GetFullName(), actor->GetDisplayFullName());
+                logger::info("Added faction {} to {}", GetFactionLabel(faction), actor->GetDisplayFullName());
             }
         }
     }
@@ -54,7 +76,7 @@ namespace DisguiseManager {
         if (actor->IsInFaction(faction)) {
             actor->RemoveFromFaction(faction);
             if (Configuration::DebugMode) {
-                logger::info("Removed faction {} from {}", faction->GetFullName(), actor->GetDisplayFullName());
+                logger::info("Removed faction {} from {}", GetFactionLabel(faction), actor->GetDisplayFullName());
             }
         }
     }
@@ -86,12 +108,30 @@ namespace DisguiseManager {
         }
     }
 
-    static bool g_playerWasInCombat = false;
+    void RemoveAllActiveDisguises() {
+        if (Configuration::DebugMode) {
+            logger::info("Removing all active disguise factions (mod disabled or cleanup)");
+        }
+
+        for (auto& [formID, state] : ActiveDisguises) {
+            if (state.faction && (state.isActive || state.removeAtGameTime > 0.0f)) {
+                ApplyToPlayerAndFollowers(state.faction, false);
+            }
+            state.isActive = false;
+            state.removeAtGameTime = -1.0f;
+        }
+    }
 
     // ====================== MAIN EVALUATION ======================
 
-
     void Evaluate(bool isLoadEvaluation) {
+        if (!Configuration::EnableMod) {
+            if (Configuration::DebugMode) {
+                logger::info("Mod is disabled – skipping evaluation");
+            }
+            return;
+        }
+
         auto player = RE::PlayerCharacter::GetSingleton();
         if (!player) return;
 
@@ -102,7 +142,6 @@ namespace DisguiseManager {
         const float now = GetCurrentGameTimeSeconds();
 
         // Group entries by faction FormID
-        // Key = faction FormID, Value = list of keyword groups for that faction
         std::unordered_map<RE::FormID, std::vector<const Configuration::DisguiseEntry*>> factionGroups;
 
         for (auto& entry : Configuration::DisguiseEntries) {
@@ -114,7 +153,7 @@ namespace DisguiseManager {
             RE::TESFaction* faction = group[0]->faction;
             const std::string& factionEditorID = group[0]->factionEditorID;
 
-            // A faction condition is met if ANY keyword group is fully worn
+            // Condition is met if ANY keyword group is fully worn
             bool conditionMet = false;
             int bestWorn = 0;
             int bestRequired = 0;
@@ -123,16 +162,13 @@ namespace DisguiseManager {
                 const int required = static_cast<int>(entry->keywords.size());
                 const int worn = CountWornKeywords(player, entry->keywords);
 
-                if (worn > bestWorn) {
-                    bestWorn = worn;
-                    bestRequired = required;
-                }
-
                 if (worn >= required) {
                     conditionMet = true;
                     bestWorn = worn;
                     bestRequired = required;
-                    // no break – we still want the best numbers for logging
+                } else if (!conditionMet && worn > bestWorn) {
+                    bestWorn = worn;
+                    bestRequired = required;
                 }
             }
 
@@ -144,7 +180,6 @@ namespace DisguiseManager {
             }
 
             if (conditionMet) {
-                // Cancel any running timer
                 if (state.removeAtGameTime > 0.0f) {
                     state.removeAtGameTime = -1.0f;
                     if (Configuration::DebugMode) {
@@ -152,13 +187,11 @@ namespace DisguiseManager {
                     }
                 }
 
-                // Make sure the faction is applied
                 if (!state.isActive || !player->IsInFaction(faction)) {
                     ApplyToPlayerAndFollowers(faction, true);
                     state.isActive = true;
                 }
             } else {
-                // Condition is NOT met for this faction
                 if (isLoadEvaluation) {
                     if (player->IsInFaction(faction)) {
                         if (Configuration::DebugMode) {
@@ -186,19 +219,28 @@ namespace DisguiseManager {
         }
     }
 
+    void OnCombatEnd() {
+        if (Configuration::DebugMode) {
+            logger::info("Combat ended → re-evaluating disguise");
+        }
+        Evaluate(false);
+    }
+
+    // ====================== TIMER + COMBAT CHECK ======================
+
     void UpdateTimers() {
+        if (!Configuration::EnableMod) return;
+
         const float now = GetCurrentGameTimeSeconds();
         auto player = RE::PlayerCharacter::GetSingleton();
 
-        // ===== Combat End Detection =====
         static float lastCombatEndTime = -9999.0f;
 
         if (player) {
             bool isInCombat = player->IsInCombat();
 
             if (g_playerWasInCombat && !isInCombat) {
-                // Only trigger if enough time has passed since the last combat-end
-                if (now - lastCombatEndTime > 3.0f) {  // 3 game seconds cooldown
+                if (now - lastCombatEndTime > 3.0f) {
                     lastCombatEndTime = now;
                     g_playerWasInCombat = false;
 
@@ -212,7 +254,6 @@ namespace DisguiseManager {
             }
         }
 
-        // ===== Normal timer expiration =====
         for (auto& [formID, state] : ActiveDisguises) {
             if (state.isActive && state.removeAtGameTime > 0.0f && now >= state.removeAtGameTime) {
                 if (Configuration::DebugMode) {
@@ -225,19 +266,13 @@ namespace DisguiseManager {
         }
     }
 
-    void OnCombatEnd() {
-        if (Configuration::DebugMode) {
-            logger::info("Combat ended → re-evaluating disguise");
-        }
-        Evaluate();
-    }
-
     // ====================== EQUIP EVENT ======================
 
     class EquipEventSink : public RE::BSTEventSink<RE::TESEquipEvent> {
     public:
         RE::BSEventNotifyControl ProcessEvent(const RE::TESEquipEvent* ev, RE::BSTEventSource<RE::TESEquipEvent>*) override {
             if (!ev || !ev->actor) return RE::BSEventNotifyControl::kContinue;
+            if (!Configuration::EnableMod) return RE::BSEventNotifyControl::kContinue;
 
             auto player = RE::PlayerCharacter::GetSingleton();
             if (ev->actor.get() != player) return RE::BSEventNotifyControl::kContinue;
@@ -249,7 +284,7 @@ namespace DisguiseManager {
                 logger::info("Armor equip/unequip detected (equipped = {})", ev->equipped);
             }
 
-            SKSE::GetTaskInterface()->AddTask([]() { Evaluate(); });
+            SKSE::GetTaskInterface()->AddTask([]() { Evaluate(false); });
 
             return RE::BSEventNotifyControl::kContinue;
         }
@@ -257,11 +292,13 @@ namespace DisguiseManager {
 
     static EquipEventSink g_equipSink;
 
-    // ====================== HIT EVENT (attack detection) ======================
+    // ====================== HIT EVENT ======================
+
     class HitEventSink : public RE::BSTEventSink<RE::TESHitEvent> {
     public:
         RE::BSEventNotifyControl ProcessEvent(const RE::TESHitEvent* ev, RE::BSTEventSource<RE::TESHitEvent>*) override {
             if (!ev || !ev->cause || !ev->target) return RE::BSEventNotifyControl::kContinue;
+            if (!Configuration::EnableMod) return RE::BSEventNotifyControl::kContinue;
 
             auto player = RE::PlayerCharacter::GetSingleton();
             if (ev->cause.get() != player) return RE::BSEventNotifyControl::kContinue;
@@ -269,12 +306,10 @@ namespace DisguiseManager {
             auto target = ev->target->As<RE::Actor>();
             if (!target) return RE::BSEventNotifyControl::kContinue;
 
-            // Ignore dead bodies
             if (target->IsDead()) {
                 return RE::BSEventNotifyControl::kContinue;
             }
 
-            // Check if currently disguised as any faction that the target belongs to
             for (auto& [formID, state] : ActiveDisguises) {
                 if (state.isActive && state.faction && target->IsInFaction(state.faction)) {
                     if (Configuration::DebugMode) {
@@ -285,9 +320,11 @@ namespace DisguiseManager {
                     state.removeAtGameTime = -1.0f;
                 }
             }
+
             return RE::BSEventNotifyControl::kContinue;
         }
     };
+
     static HitEventSink g_hitSink;
 
     // ====================== PERIODIC TIMER CHECK ======================
@@ -307,7 +344,7 @@ namespace DisguiseManager {
         if (source) {
             source->AddEventSink<RE::TESEquipEvent>(&g_equipSink);
             source->AddEventSink<RE::TESHitEvent>(&g_hitSink);
-            logger::info("Equip + Combat + Hit event sinks registered");
+            logger::info("Equip + Hit event sinks registered");
         }
 
         ScheduleTimerCheck();

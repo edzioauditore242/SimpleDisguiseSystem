@@ -7,7 +7,7 @@
 namespace DisguiseManager {
     struct ActiveDisguise {
         RE::TESFaction* faction = nullptr;
-        float removeAtGameTime = -1.0f;  // -1 = No timer
+        float removeAtGameTime = -1.0f;
         bool isActive = false;
     };
 
@@ -16,5 +16,6 @@ namespace DisguiseManager {
     void Evaluate(bool isLoadEvaluation = false);
     void UpdateTimers();
     void OnCombatEnd();
+    void RemoveAllActiveDisguises();
     void Register();
 }

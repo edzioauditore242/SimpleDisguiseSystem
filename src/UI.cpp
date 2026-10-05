@@ -3,13 +3,13 @@
 #include <fstream>
 #include <sstream>
 #include <unordered_map>
+
 #include "Configuration.h"
 #include "DisguiseManager.h"
 #include "Logger.h"
 #include "Translation.h"
 
 namespace UI {
-    // Helper to save General settings back to INI
     static void SaveGeneralSettings() {
         if (!std::filesystem::exists(Configuration::IniPath)) {
             logger::error("Cannot save – INI file not found");
@@ -22,13 +22,14 @@ namespace UI {
         std::stringstream buffer;
         std::string line;
         bool inGeneral = false;
+        bool enableWritten = false;
         bool timeoutWritten = false;
         bool followerWritten = false;
         bool debugWritten = false;
 
         while (std::getline(in, line)) {
             std::string trimmed = line;
-            // crude section detection
+
             if (trimmed.find("[General]") != std::string::npos) {
                 inGeneral = true;
                 buffer << line << "\n";
@@ -39,6 +40,11 @@ namespace UI {
             }
 
             if (inGeneral) {
+                if (trimmed.find("EnableMod") != std::string::npos) {
+                    buffer << "EnableMod = " << (Configuration::EnableMod ? "true" : "false") << "\n";
+                    enableWritten = true;
+                    continue;
+                }
                 if (trimmed.find("TimeoutDuration") != std::string::npos) {
                     buffer << "TimeoutDuration = " << Configuration::TimeoutDuration << "\n";
                     timeoutWritten = true;
@@ -60,9 +66,9 @@ namespace UI {
         }
         in.close();
 
-        // If some keys were missing, append them
-        if (!timeoutWritten || !followerWritten || !debugWritten) {
+        if (!enableWritten || !timeoutWritten || !followerWritten || !debugWritten) {
             buffer << "\n[General]\n";
+            if (!enableWritten) buffer << "EnableMod = " << (Configuration::EnableMod ? "true" : "false") << "\n";
             if (!timeoutWritten) buffer << "TimeoutDuration = " << Configuration::TimeoutDuration << "\n";
             if (!followerWritten) buffer << "FollowerSupport = " << (Configuration::FollowerSupport ? "true" : "false") << "\n";
             if (!debugWritten) buffer << "DebugMode = " << (Configuration::DebugMode ? "true" : "false") << "\n";
@@ -91,18 +97,28 @@ namespace UI {
         logger::info("Menu Framework section registered");
     }
 
-    // ======================== SETTINGS PAGE ========================
     void __stdcall RenderSettings() {
         ImGuiMCP::Text("%s", Translation::Get("Settings_Title"));
         ImGuiMCP::Separator();
 
-        // TimeoutDuration
+        bool enable = Configuration::EnableMod;
+        if (ImGuiMCP::Checkbox(Translation::Get("Settings_EnableMod"), &enable)) {
+            Configuration::EnableMod = enable;
+            if (!enable) {
+                DisguiseManager::RemoveAllActiveDisguises();
+            } else {
+                // Mod just enabled → evaluate current armor immediately
+                DisguiseManager::Evaluate(false);
+            }
+        }
+
+        ImGuiMCP::Spacing();
+
         ImGuiMCP::Text("%s", Translation::Get("Settings_Timeout"));
         ImGuiMCP::SliderFloat("##TimeoutDuration", &Configuration::TimeoutDuration, 10.0f, 6000.0f, "%.0f");
 
         ImGuiMCP::Spacing();
 
-        // FollowerSupport
         bool follower = Configuration::FollowerSupport;
         if (ImGuiMCP::Checkbox(Translation::Get("Settings_FollowerSupport"), &follower)) {
             Configuration::FollowerSupport = follower;
@@ -121,7 +137,11 @@ namespace UI {
             logger::info("Reloading INI requested from menu");
             Configuration::Load();
             Configuration::ResolveForms();
-            DisguiseManager::Evaluate();
+            if (Configuration::EnableMod) {
+                DisguiseManager::Evaluate();
+            } else {
+                DisguiseManager::RemoveAllActiveDisguises();
+            }
         }
 
         ImGuiMCP::Spacing();
@@ -136,11 +156,11 @@ namespace UI {
                 auto& entry = Configuration::DisguiseEntries[i];
 
                 ImGuiMCP::Text("%s #%zu", Translation::Get("Settings_Entry"), i + 1);
+                ImGuiMCP::BulletText("%s: %s", Translation::Get("Settings_Faction"), entry.factionEditorID.c_str());
                 ImGuiMCP::BulletText("%s (%zu):", Translation::Get("Settings_Keywords"), entry.keywords.size());
                 for (const auto& kw : entry.keywords) {
                     ImGuiMCP::BulletText("   %s", kw.c_str());
                 }
-                ImGuiMCP::BulletText("%s: %s", Translation::Get("Settings_Faction"), entry.factionEditorID.c_str());
 
                 if (entry.faction) {
                     ImGuiMCP::TextColored(ImGuiMCP::ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "%s", Translation::Get("Settings_FormOK"));
@@ -153,7 +173,6 @@ namespace UI {
         }
     }
 
-    // ======================== DEBUG PAGE ========================
     void __stdcall RenderDebug() {
         ImGuiMCP::Text("%s", Translation::Get("Debug_Title"));
         ImGuiMCP::Separator();
@@ -189,10 +208,17 @@ namespace UI {
         for (auto& [formID, entry] : uniqueFactions) {
             bool inFaction = player->IsInFaction(entry->faction);
             auto it = DisguiseManager::ActiveDisguises.find(formID);
-            bool isActive = (it != DisguiseManager::ActiveDisguises.end()) ? it->second.isActive : false;
+            bool isActive = false;
+            bool hasTimer = false;
+
+            if (it != DisguiseManager::ActiveDisguises.end()) {
+                isActive = it->second.isActive;
+                hasTimer = it->second.removeAtGameTime > 0.0f;
+            }
 
             ImGuiMCP::Text("%s", entry->factionEditorID.c_str());
             ImGuiMCP::BulletText("%s: %s", Translation::Get("Debug_InFaction"), inFaction ? "YES" : "no");
+            ImGuiMCP::BulletText("%s: %s", Translation::Get("Debug_Timer"), hasTimer ? "YES" : "no");
             ImGuiMCP::BulletText("%s: %s", Translation::Get("Debug_ModActive"), isActive ? "YES" : "no");
             ImGuiMCP::Separator();
         }
@@ -200,7 +226,9 @@ namespace UI {
         ImGuiMCP::Spacing();
         if (ImGuiMCP::Button(Translation::Get("Debug_ForceEvaluate"))) {
             logger::info("Force Evaluate requested from Debug page");
-            DisguiseManager::Evaluate();
+            if (Configuration::EnableMod) {
+                DisguiseManager::Evaluate();
+            }
         }
     }
 }

@@ -38,12 +38,13 @@ namespace Configuration {
             std::ofstream out(IniPath);
             if (out.is_open()) {
                 out << "[General]\n";
+                out << "EnableMod = true\n";
                 out << "TimeoutDuration = 120\n";
                 out << "FollowerSupport = true\n";
                 out << "DebugMode = false\n\n";
                 out << "[Disguise]\n";
                 out << "; Format: Keyword1,Keyword2,Keyword3|FactionEditorID\n";
-                out << "Keywords = ArmorMaterialHideCuirass,ArmorMaterialHideBoots,ArmorMaterialHideGauntlets|BanditFaction\n";
+                out << "Keywords = ArmorMaterialHideCuirass,ArmorMaterialHideBoots,ArmorMaterialHideGauntlets|BanditAllyFaction\n";
                 out.close();
             }
             return;
@@ -60,7 +61,7 @@ namespace Configuration {
 
         while (std::getline(file, line)) {
             if (!line.empty() && static_cast<unsigned char>(line[0]) == 0xEF) {
-                line.erase(0, 3);  // remove BOM
+                line.erase(0, 3);
             }
             line = Trim(line);
 
@@ -78,7 +79,12 @@ namespace Configuration {
             std::string value = Trim(line.substr(eqPos + 1));
 
             if (currentSection == "General") {
-                if (key == "TimeoutDuration") {
+                if (key == "EnableMod") {
+                    std::string lower = value;
+                    std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+                    EnableMod = (lower == "true" || lower == "1");
+                    logger::info("EnableMod = {}", EnableMod);
+                } else if (key == "TimeoutDuration") {
                     try {
                         TimeoutDuration = std::stof(value);
                         logger::info("TimeoutDuration = {:.1f} game seconds", TimeoutDuration);
