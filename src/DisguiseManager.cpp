@@ -306,9 +306,12 @@ namespace DisguiseManager {
             auto target = ev->target->As<RE::Actor>();
             if (!target) return RE::BSEventNotifyControl::kContinue;
 
+            // Ignore dead bodies
             if (target->IsDead()) {
                 return RE::BSEventNotifyControl::kContinue;
             }
+
+            bool removedAny = false;
 
             for (auto& [formID, state] : ActiveDisguises) {
                 if (state.isActive && state.faction && target->IsInFaction(state.faction)) {
@@ -318,7 +321,33 @@ namespace DisguiseManager {
                     ApplyToPlayerAndFollowers(state.faction, false);
                     state.isActive = false;
                     state.removeAtGameTime = -1.0f;
+                    removedAny = true;
                 }
+            }
+
+            // Option B: after hit-removal, re-evaluate in ~2 real seconds only if not in combat
+            if (removedAny) {
+                std::thread([]() {
+                    std::this_thread::sleep_for(std::chrono::seconds(2));
+                    SKSE::GetTaskInterface()->AddTask([]() {
+                        if (!Configuration::EnableMod) return;
+
+                        auto player = RE::PlayerCharacter::GetSingleton();
+                        if (!player) return;
+
+                        if (player->IsInCombat()) {
+                            if (Configuration::DebugMode) {
+                                logger::info("Post-hit check: player still in combat → skip re-evaluate (wait for combat end)");
+                            }
+                            return;
+                        }
+
+                        if (Configuration::DebugMode) {
+                            logger::info("Post-hit check: player not in combat → re-evaluating disguise");
+                        }
+                        Evaluate(false);
+                    });
+                }).detach();
             }
 
             return RE::BSEventNotifyControl::kContinue;
