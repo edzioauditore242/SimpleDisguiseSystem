@@ -156,10 +156,12 @@ namespace UI {
 
                 ImGuiMCP::Text("%s #%zu", Translation::Get("Settings_Entry"), i + 1);
                 ImGuiMCP::BulletText("%s: %s", Translation::Get("Settings_Faction"), entry.factionEditorID.c_str());
-                ImGuiMCP::BulletText("%s (%zu):", Translation::Get("Settings_Keywords"), entry.keywords.size());
-                for (const auto& kw : entry.keywords) {
-                    ImGuiMCP::BulletText("   %s", kw.c_str());
+                std::string keywordLine;
+                for (size_t k = 0; k < entry.keywords.size(); ++k) {
+                    if (k > 0) keywordLine += ", ";
+                    keywordLine += entry.keywords[k];
                 }
+                ImGuiMCP::BulletText("%s: %s", Translation::Get("Settings_Keywords"), keywordLine.c_str());
 
                 if (entry.faction) {
                     ImGuiMCP::TextColored(ImGuiMCP::ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "%s", Translation::Get("Settings_FormOK"));
