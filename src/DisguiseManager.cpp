@@ -136,7 +136,7 @@ namespace DisguiseManager {
     void Evaluate(bool isLoadEvaluation) {
         if (!Configuration::EnableMod) {
             if (Configuration::DebugMode) {
-                logger::info("Mod is disabled – skipping evaluation");
+                logger::info("Mod is disabled -> skipping evaluation");
             }
             return;
         }
@@ -190,7 +190,7 @@ namespace DisguiseManager {
                 if (state.removeAtGameTime > 0.0f) {
                     state.removeAtGameTime = -1.0f;
                     if (Configuration::DebugMode) {
-                        logger::info("  → Cancelled removal timer");
+                        logger::info("  Condition Met: Cancelled removal timer");
                     }
                 }
 
@@ -202,7 +202,7 @@ namespace DisguiseManager {
                 if (isLoadEvaluation) {
                     if (player->IsInFaction(faction)) {
                         if (Configuration::DebugMode) {
-                            logger::info("  → Load evaluation: condition not met → removing faction immediately");
+                            logger::info("  Load evaluation: condition not met -> removing faction immediately");
                         }
                         ApplyToPlayerAndFollowers(faction, false);
                     }
@@ -213,7 +213,7 @@ namespace DisguiseManager {
                         const float gameDuration = RealSecondsToGameSeconds(Configuration::TimeoutDuration);
                         state.removeAtGameTime = now + gameDuration;
                         if (Configuration::DebugMode) {
-                            logger::info("  → Started removal timer ({:.0f} real sec ≈ {:.0f} game sec)", Configuration::TimeoutDuration, gameDuration);
+                            logger::info("  Timer Active: Started removal timer ({:.0f} real sec = {:.0f} game sec)", Configuration::TimeoutDuration, gameDuration);
                         }
                     }
                 }
@@ -229,7 +229,7 @@ namespace DisguiseManager {
 
     void OnCombatEnd() {
         if (Configuration::DebugMode) {
-            logger::info("Combat ended → re-evaluating disguise");
+            logger::info("Combat ended -> re-evaluating disguise");
         }
         Evaluate(false);
     }
@@ -253,7 +253,7 @@ namespace DisguiseManager {
                     g_playerWasInCombat = false;
 
                     if (Configuration::DebugMode) {
-                        logger::info("Player left combat → re-evaluating disguise");
+                        logger::info("Player left combat -> re-evaluating disguise");
                     }
                     OnCombatEnd();
                 }
@@ -265,7 +265,7 @@ namespace DisguiseManager {
         for (auto& [formID, state] : ActiveDisguises) {
             if (state.isActive && state.removeAtGameTime > 0.0f && now >= state.removeAtGameTime) {
                 if (Configuration::DebugMode) {
-                    logger::info("Removal timer expired → removing faction");
+                    logger::info("Removal timer expired -> removing faction");
                 }
                 ApplyToPlayerAndFollowers(state.faction, false);
                 state.isActive = false;
@@ -323,7 +323,7 @@ namespace DisguiseManager {
             for (auto& [formID, state] : ActiveDisguises) {
                 if (state.isActive && state.faction && target->IsInFaction(state.faction)) {
                     if (Configuration::DebugMode) {
-                        logger::info("Player attacked member of active disguise faction → removing disguise immediately");
+                        logger::info("Player attacked member of active disguise faction -> removing disguise immediately");
                     }
                     ApplyToPlayerAndFollowers(state.faction, false);
                     state.isActive = false;
@@ -343,13 +343,13 @@ namespace DisguiseManager {
 
                         if (player->IsInCombat()) {
                             if (Configuration::DebugMode) {
-                                logger::info("Post-hit check: player still in combat → skip re-evaluate (wait for combat end)");
+                                logger::info("Post-hit check: player still in combat -> skip re-evaluate (waiting for combat end)");
                             }
                             return;
                         }
 
                         if (Configuration::DebugMode) {
-                            logger::info("Post-hit check: player not in combat → re-evaluating disguise");
+                            logger::info("Post-hit check: player not in combat -> re-evaluating disguise");
                         }
                         Evaluate(false);
                     });
