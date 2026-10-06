@@ -141,7 +141,6 @@ namespace DisguiseManager {
 
         const float now = GetCurrentGameTimeSeconds();
 
-        // Group entries by faction FormID
         std::unordered_map<RE::FormID, std::vector<const Configuration::DisguiseEntry*>> factionGroups;
 
         for (auto& entry : Configuration::DisguiseEntries) {
@@ -325,7 +324,6 @@ namespace DisguiseManager {
                 }
             }
 
-            // Option B: after hit-removal, re-evaluate in ~2 real seconds only if not in combat
             if (removedAny) {
                 std::thread([]() {
                     std::this_thread::sleep_for(std::chrono::seconds(2));

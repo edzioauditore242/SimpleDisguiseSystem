@@ -107,7 +107,6 @@ namespace UI {
             if (!enable) {
                 DisguiseManager::RemoveAllActiveDisguises();
             } else {
-                // Mod just enabled → evaluate current armor immediately
                 DisguiseManager::Evaluate(false);
             }
         }

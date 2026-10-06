@@ -12,7 +12,7 @@ static void DelayedEvaluate() {
         std::this_thread::sleep_for(std::chrono::seconds(4));
         SKSE::GetTaskInterface()->AddTask([]() {
             logger::info("Running delayed evaluation after load");
-            DisguiseManager::Evaluate(true);  // true = load evaluation
+            DisguiseManager::Evaluate(true);
         });
     }).detach();
 }
