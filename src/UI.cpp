@@ -114,7 +114,7 @@ namespace UI {
         ImGuiMCP::Spacing();
 
         ImGuiMCP::Text("%s", Translation::Get("Settings_Timeout"));
-        ImGuiMCP::SliderFloat("##TimeoutDuration", &Configuration::TimeoutDuration, 10.0f, 6000.0f, "%.0f");
+        ImGuiMCP::SliderFloat("##TimeoutDuration", &Configuration::TimeoutDuration, 1.0f, 600.0f, "%.0f");
 
         ImGuiMCP::Spacing();
 

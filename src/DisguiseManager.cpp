@@ -18,6 +18,34 @@ namespace DisguiseManager {
         return calendar->GetCurrentGameTime() * 24.0f * 3600.0f;
     }
 
+    static float RealSecondsToGameSeconds(float realSeconds) {
+        auto calendar = RE::Calendar::GetSingleton();
+        float timescale = 20.0f;
+        if (calendar) {
+            timescale = calendar->GetTimescale();
+            if (timescale <= 0.0f) {
+                timescale = 20.0f;
+            }
+        }
+        return realSeconds * timescale;
+    }
+
+    static std::string GetFactionLabel(RE::TESFaction* faction) {
+        if (!faction) return "<null>";
+
+        const char* fullName = faction->GetFullName();
+        if (fullName && fullName[0] != '\0') {
+            return fullName;
+        }
+
+        const char* editorID = faction->GetFormEditorID();
+        if (editorID && editorID[0] != '\0') {
+            return editorID;
+        }
+
+        return std::format("FormID:{:08X}", faction->GetFormID());
+    }
+
     static int CountWornKeywords(RE::Actor* actor, const std::vector<std::string>& required) {
         if (!actor) return 0;
 
@@ -40,25 +68,6 @@ namespace DisguiseManager {
             }
         }
         return count;
-    }
-
-    static std::string GetFactionLabel(RE::TESFaction* faction) {
-        if (!faction) return "<null>";
-
-        // Prefer full name if it exists
-        const char* fullName = faction->GetFullName();
-        if (fullName && fullName[0] != '\0') {
-            return fullName;
-        }
-
-        // Fallback to EditorID
-        const char* editorID = faction->GetFormEditorID();
-        if (editorID && editorID[0] != '\0') {
-            return editorID;
-        }
-
-        // Last fallback
-        return std::format("FormID:{:08X}", faction->GetFormID());
     }
 
     static void AddFactionToActor(RE::Actor* actor, RE::TESFaction* faction) {
@@ -152,7 +161,6 @@ namespace DisguiseManager {
             RE::TESFaction* faction = group[0]->faction;
             const std::string& factionEditorID = group[0]->factionEditorID;
 
-            // Condition is met if ANY keyword group is fully worn
             bool conditionMet = false;
             int bestWorn = 0;
             int bestRequired = 0;
@@ -202,9 +210,10 @@ namespace DisguiseManager {
                     state.removeAtGameTime = -1.0f;
                 } else {
                     if (state.isActive && state.removeAtGameTime < 0.0f) {
-                        state.removeAtGameTime = now + Configuration::TimeoutDuration;
+                        const float gameDuration = RealSecondsToGameSeconds(Configuration::TimeoutDuration);
+                        state.removeAtGameTime = now + gameDuration;
                         if (Configuration::DebugMode) {
-                            logger::info("  → Started removal timer ({:.0f} game seconds)", Configuration::TimeoutDuration);
+                            logger::info("  → Started removal timer ({:.0f} real sec ≈ {:.0f} game sec)", Configuration::TimeoutDuration, gameDuration);
                         }
                     }
                 }
@@ -305,7 +314,6 @@ namespace DisguiseManager {
             auto target = ev->target->As<RE::Actor>();
             if (!target) return RE::BSEventNotifyControl::kContinue;
 
-            // Ignore dead bodies
             if (target->IsDead()) {
                 return RE::BSEventNotifyControl::kContinue;
             }

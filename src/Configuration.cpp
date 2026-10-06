@@ -128,7 +128,7 @@ namespace Configuration {
             } else if (key == "TimeoutDuration") {
                 try {
                     TimeoutDuration = std::stof(value);
-                    logger::info("TimeoutDuration = {:.1f} game seconds", TimeoutDuration);
+                    logger::info("TimeoutDuration = {:.1f} seconds", TimeoutDuration);
                 } catch (...) {
                     logger::error("Invalid TimeoutDuration value");
                 }
