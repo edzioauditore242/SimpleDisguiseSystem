@@ -334,7 +334,7 @@ namespace DisguiseManager {
 
             if (removedAny) {
                 std::thread([]() {
-                    std::this_thread::sleep_for(std::chrono::seconds(2));
+                    std::this_thread::sleep_for(std::chrono::seconds(4));
                     SKSE::GetTaskInterface()->AddTask([]() {
                         if (!Configuration::EnableMod) return;
 
