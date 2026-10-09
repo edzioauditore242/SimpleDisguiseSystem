@@ -164,7 +164,7 @@ namespace Configuration {
                 out << "DebugMode = false\n\n";
                 out << "[Disguise]\n";
                 out << "; Default examples (optional). Prefer custom INIs in SimpleDisguiseSystem folder.\n";
-                out << "; Format: Keyword1,Keyword2,Keyword3|FactionEditorID\n";
+                out << "; Format: Keyword1,Keyword2|FactionEditorID\n";
                 out.close();
             }
         }
