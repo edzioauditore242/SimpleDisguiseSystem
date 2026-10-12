@@ -159,7 +159,7 @@ namespace Configuration {
             if (out.is_open()) {
                 out << "[General]\n";
                 out << "EnableMod = true\n";
-                out << "TimeoutDuration = 120\n";
+                out << "TimeoutDuration = 5\n";
                 out << "FollowerSupport = true\n";
                 out << "DebugMode = false\n\n";
                 out << "[Disguise]\n";

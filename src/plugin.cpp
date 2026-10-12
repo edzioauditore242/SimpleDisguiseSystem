@@ -20,13 +20,13 @@ static void DelayedEvaluate() {
 void OnMessage(SKSE::MessagingInterface::Message* message) {
     switch (message->type) {
         case SKSE::MessagingInterface::kDataLoaded:
-            logger::info("Data loaded – preparing delayed evaluation");
+            logger::info("Data loaded - preparing delayed evaluation");
             Configuration::ResolveForms();
             DelayedEvaluate();
             break;
 
         case SKSE::MessagingInterface::kPostLoadGame:
-            logger::info("Save loaded – preparing delayed evaluation");
+            logger::info("Save loaded - preparing delayed evaluation");
             DelayedEvaluate();
             break;
 
