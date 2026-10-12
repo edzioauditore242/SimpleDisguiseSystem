@@ -9,6 +9,7 @@
 
 namespace DisguiseManager {
     static bool g_playerWasInCombat = false;
+    static bool g_pendingPostCombatEvaluate = false;
 
     // ====================== HELPERS ======================
 
@@ -247,7 +248,17 @@ namespace DisguiseManager {
         if (player) {
             bool isInCombat = player->IsInCombat();
 
-            if (g_playerWasInCombat && !isInCombat) {
+            if (g_pendingPostCombatEvaluate && !isInCombat) {
+                g_pendingPostCombatEvaluate = false;
+                g_playerWasInCombat = false;
+
+                if (Configuration::DebugMode) {
+                    logger::info("Pending post-combat evaluate -> re-evaluating disguise");
+                }
+                OnCombatEnd();
+            }
+            else if (g_playerWasInCombat && !isInCombat) {
+                static float lastCombatEndTime = -9999.0f;
                 if (now - lastCombatEndTime > 3.0f) {
                     lastCombatEndTime = now;
                     g_playerWasInCombat = false;
@@ -333,6 +344,12 @@ namespace DisguiseManager {
             }
 
             if (removedAny) {
+                g_pendingPostCombatEvaluate = true;
+
+                if (Configuration::DebugMode) {
+                    logger::info("Disguise removed -> waiting for combat to end before re-evaluate");
+                }
+
                 std::thread([]() {
                     std::this_thread::sleep_for(std::chrono::seconds(4));
                     SKSE::GetTaskInterface()->AddTask([]() {
@@ -343,13 +360,14 @@ namespace DisguiseManager {
 
                         if (player->IsInCombat()) {
                             if (Configuration::DebugMode) {
-                                logger::info("Post-hit check: player still in combat -> skip re-evaluate (waiting for combat end)");
+                                logger::info("Post-hit check: still in combat -> keep waiting for combat end");
                             }
                             return;
                         }
 
+                        g_pendingPostCombatEvaluate = false;
                         if (Configuration::DebugMode) {
-                            logger::info("Post-hit check: player not in combat -> re-evaluating disguise");
+                            logger::info("Post-hit check: not in combat -> re-evaluating disguise");
                         }
                         Evaluate(false);
                     });
