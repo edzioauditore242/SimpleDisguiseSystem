@@ -1,9 +1,11 @@
 ﻿#include "DisguiseManager.h"
 
 #include <chrono>
+#include <cstdint>
+#include <format>
 #include <thread>
 #include <unordered_map>
-#include <format>
+
 #include "Configuration.h"
 #include "Logger.h"
 
@@ -71,13 +73,25 @@ namespace DisguiseManager {
         return count;
     }
 
-    static void AddFactionToActor(RE::Actor* actor, RE::TESFaction* faction) {
+    static void AddFactionToActor(RE::Actor* actor, RE::TESFaction* faction, std::int8_t rank) {
         if (!actor || !faction) return;
-        if (!actor->IsInFaction(faction)) {
-            actor->AddToFaction(faction, 0);
-            if (Configuration::DebugMode) {
-                logger::info("Added faction {} to {}", GetFactionLabel(faction), actor->GetDisplayFullName());
+
+        if (actor->IsInFaction(faction)) {
+            // Update rank if different
+            auto currentRank = actor->GetFactionRank(faction, false);
+            if (currentRank != rank) {
+                actor->RemoveFromFaction(faction);
+                actor->AddToFaction(faction, rank);
+                if (Configuration::DebugMode) {
+                    logger::info("Updated faction {} rank {} → {} on {}", GetFactionLabel(faction), currentRank, rank, actor->GetDisplayFullName());
+                }
             }
+            return;
+        }
+
+        actor->AddToFaction(faction, rank);
+        if (Configuration::DebugMode) {
+            logger::info("Added faction {} (rank {}) to {}", GetFactionLabel(faction), rank, actor->GetDisplayFullName());
         }
     }
 
@@ -91,12 +105,12 @@ namespace DisguiseManager {
         }
     }
 
-    static void ApplyToPlayerAndFollowers(RE::TESFaction* faction, bool add) {
+    static void ApplyToPlayerAndFollowers(RE::TESFaction* faction, bool add, std::int8_t rank = 0) {
         auto player = RE::PlayerCharacter::GetSingleton();
         if (!player || !faction) return;
 
         if (add) {
-            AddFactionToActor(player, faction);
+            AddFactionToActor(player, faction, rank);
         } else {
             RemoveFactionFromActor(player, faction);
         }
@@ -108,7 +122,7 @@ namespace DisguiseManager {
                     auto actor = handle.get();
                     if (actor && actor->IsPlayerTeammate()) {
                         if (add) {
-                            AddFactionToActor(actor.get(), faction);
+                            AddFactionToActor(actor.get(), faction, rank);
                         } else {
                             RemoveFactionFromActor(actor.get(), faction);
                         }
@@ -129,6 +143,7 @@ namespace DisguiseManager {
             }
             state.isActive = false;
             state.removeAtGameTime = -1.0f;
+            state.appliedRank = 0;
         }
     }
 
@@ -137,7 +152,7 @@ namespace DisguiseManager {
     void Evaluate(bool isLoadEvaluation) {
         if (!Configuration::EnableMod) {
             if (Configuration::DebugMode) {
-                logger::info("Mod is disabled -> skipping evaluation");
+                logger::info("Mod is disabled – skipping evaluation");
             }
             return;
         }
@@ -165,18 +180,55 @@ namespace DisguiseManager {
             bool conditionMet = false;
             int bestWorn = 0;
             int bestRequired = 0;
+            std::int8_t bestRank = -128;  // track highest rank among matching groups
+            bool anyMatch = false;
 
             for (auto* entry : group) {
                 const int required = static_cast<int>(entry->keywords.size());
                 const int worn = CountWornKeywords(player, entry->keywords);
 
-                if (worn >= required) {
+                if (worn >= required && required > 0) {
                     conditionMet = true;
+                    anyMatch = true;
                     bestWorn = worn;
                     bestRequired = required;
+                    if (entry->rank > bestRank) {
+                        bestRank = entry->rank;
+                    }
                 } else if (!conditionMet && worn > bestWorn) {
                     bestWorn = worn;
                     bestRequired = required;
+                }
+            }
+
+            // If condition met but all ranks were default-only path with rank 0
+            if (conditionMet && !anyMatch) {
+                bestRank = 0;
+            }
+            if (conditionMet && bestRank == -128) {
+                bestRank = 0;
+            }
+
+            // Fix: when matching, bestRank starts at -128; if only rank 0 matches, bestRank becomes 0
+            if (conditionMet) {
+                bool rankFound = false;
+                std::int8_t highest = 0;
+                bool first = true;
+                for (auto* entry : group) {
+                    const int required = static_cast<int>(entry->keywords.size());
+                    const int worn = CountWornKeywords(player, entry->keywords);
+                    if (worn >= required && required > 0) {
+                        if (first || entry->rank > highest) {
+                            highest = entry->rank;
+                            first = false;
+                        }
+                        rankFound = true;
+                    }
+                }
+                if (rankFound) {
+                    bestRank = highest;
+                } else {
+                    bestRank = 0;
                 }
             }
 
@@ -184,37 +236,42 @@ namespace DisguiseManager {
             state.faction = faction;
 
             if (Configuration::DebugMode) {
-                logger::info("Faction: {} | Best Worn: {}/{} | Condition: {} | Active: {} | Timer: {}", factionEditorID, bestWorn, bestRequired, conditionMet, state.isActive, state.removeAtGameTime > 0.0f ? "YES" : "no");
+                logger::info("Faction: {} | Best Worn: {}/{} | Condition: {} | Active: {} | Timer: {} | Rank: {}", factionEditorID, bestWorn, bestRequired, conditionMet, state.isActive, state.removeAtGameTime > 0.0f ? "YES" : "no",
+                             conditionMet ? bestRank : state.appliedRank);
             }
 
             if (conditionMet) {
                 if (state.removeAtGameTime > 0.0f) {
                     state.removeAtGameTime = -1.0f;
                     if (Configuration::DebugMode) {
-                        logger::info("  Condition Met: Cancelled removal timer");
+                        logger::info("  → Cancelled removal timer");
                     }
                 }
 
-                if (!state.isActive || !player->IsInFaction(faction)) {
-                    ApplyToPlayerAndFollowers(faction, true);
+                const bool needApply = !state.isActive || !player->IsInFaction(faction) || state.appliedRank != bestRank;
+
+                if (needApply) {
+                    ApplyToPlayerAndFollowers(faction, true, bestRank);
                     state.isActive = true;
+                    state.appliedRank = bestRank;
                 }
             } else {
                 if (isLoadEvaluation) {
                     if (player->IsInFaction(faction)) {
                         if (Configuration::DebugMode) {
-                            logger::info("  Load evaluation: condition not met -> removing faction immediately");
+                            logger::info("  → Load evaluation: condition not met → removing faction immediately");
                         }
                         ApplyToPlayerAndFollowers(faction, false);
                     }
                     state.isActive = false;
                     state.removeAtGameTime = -1.0f;
+                    state.appliedRank = 0;
                 } else {
                     if (state.isActive && state.removeAtGameTime < 0.0f) {
                         const float gameDuration = RealSecondsToGameSeconds(Configuration::TimeoutDuration);
                         state.removeAtGameTime = now + gameDuration;
                         if (Configuration::DebugMode) {
-                            logger::info("  Timer Active: Started removal timer ({:.0f} real sec = {:.0f} game sec)", Configuration::TimeoutDuration, gameDuration);
+                            logger::info("  → Started removal timer ({:.0f} real sec ≈ {:.0f} game sec)", Configuration::TimeoutDuration, gameDuration);
                         }
                     }
                 }
@@ -230,7 +287,7 @@ namespace DisguiseManager {
 
     void OnCombatEnd() {
         if (Configuration::DebugMode) {
-            logger::info("Combat ended -> re-evaluating disguise");
+            logger::info("Combat ended → re-evaluating disguise");
         }
         Evaluate(false);
     }
@@ -243,8 +300,6 @@ namespace DisguiseManager {
         const float now = GetCurrentGameTimeSeconds();
         auto player = RE::PlayerCharacter::GetSingleton();
 
-        static float lastCombatEndTime = -9999.0f;
-
         if (player) {
             bool isInCombat = player->IsInCombat();
 
@@ -253,18 +308,17 @@ namespace DisguiseManager {
                 g_playerWasInCombat = false;
 
                 if (Configuration::DebugMode) {
-                    logger::info("Pending post-combat evaluate -> re-evaluating disguise");
+                    logger::info("Pending post-combat evaluate → re-evaluating disguise");
                 }
                 OnCombatEnd();
-            }
-            else if (g_playerWasInCombat && !isInCombat) {
+            } else if (g_playerWasInCombat && !isInCombat) {
                 static float lastCombatEndTime = -9999.0f;
                 if (now - lastCombatEndTime > 3.0f) {
                     lastCombatEndTime = now;
                     g_playerWasInCombat = false;
 
                     if (Configuration::DebugMode) {
-                        logger::info("Player left combat -> re-evaluating disguise");
+                        logger::info("Player left combat → re-evaluating disguise");
                     }
                     OnCombatEnd();
                 }
@@ -276,11 +330,12 @@ namespace DisguiseManager {
         for (auto& [formID, state] : ActiveDisguises) {
             if (state.isActive && state.removeAtGameTime > 0.0f && now >= state.removeAtGameTime) {
                 if (Configuration::DebugMode) {
-                    logger::info("Removal timer expired -> removing faction");
+                    logger::info("Removal timer expired → removing faction");
                 }
                 ApplyToPlayerAndFollowers(state.faction, false);
                 state.isActive = false;
                 state.removeAtGameTime = -1.0f;
+                state.appliedRank = 0;
             }
         }
     }
@@ -334,11 +389,12 @@ namespace DisguiseManager {
             for (auto& [formID, state] : ActiveDisguises) {
                 if (state.isActive && state.faction && target->IsInFaction(state.faction)) {
                     if (Configuration::DebugMode) {
-                        logger::info("Player attacked member of active disguise faction -> removing disguise immediately");
+                        logger::info("Player attacked member of active disguise faction → removing disguise immediately");
                     }
                     ApplyToPlayerAndFollowers(state.faction, false);
                     state.isActive = false;
                     state.removeAtGameTime = -1.0f;
+                    state.appliedRank = 0;
                     removedAny = true;
                 }
             }
@@ -347,7 +403,7 @@ namespace DisguiseManager {
                 g_pendingPostCombatEvaluate = true;
 
                 if (Configuration::DebugMode) {
-                    logger::info("Disguise removed -> waiting for combat to end before re-evaluate");
+                    logger::info("Disguise removed by hit → pending re-evaluate when combat ends");
                 }
 
                 std::thread([]() {
@@ -360,14 +416,14 @@ namespace DisguiseManager {
 
                         if (player->IsInCombat()) {
                             if (Configuration::DebugMode) {
-                                logger::info("Post-hit check: still in combat -> keep waiting for combat end");
+                                logger::info("Post-hit check: still in combat → keep waiting for combat end");
                             }
                             return;
                         }
 
                         g_pendingPostCombatEvaluate = false;
                         if (Configuration::DebugMode) {
-                            logger::info("Post-hit check: not in combat -> re-evaluating disguise");
+                            logger::info("Post-hit check: not in combat → re-evaluating disguise");
                         }
                         Evaluate(false);
                     });

@@ -62,25 +62,41 @@ namespace Configuration {
             if (key != "Keywords") continue;
 
             auto parts = Split(value, '|');
-            if (parts.size() != 2) {
-                logger::error("Invalid Keywords line in {} (need Keywords|FactionEditorID): {}", path.filename().string(), value);
+            if (parts.size() != 2 && parts.size() != 3) {
+                logger::error("Invalid Keywords line in {} (need Keywords|Faction or Keywords|Faction|Rank): {}", path.filename().string(), value);
                 continue;
             }
 
             DisguiseEntry entry;
             entry.keywords = Split(parts[0], ',');
             entry.factionEditorID = parts[1];
+            entry.rank = 0;
+
+            if (parts.size() == 3) {
+                try {
+                    int parsed = std::stoi(parts[2]);
+                    if (parsed < -128 || parsed > 127) {
+                        logger::error("Rank out of range in {}: {} (using 0)", path.filename().string(), parts[2]);
+                        entry.rank = 0;
+                    } else {
+                        entry.rank = static_cast<std::int8_t>(parsed);
+                    }
+                } catch (...) {
+                    logger::error("Invalid rank in {}: {} (using 0)", path.filename().string(), parts[2]);
+                    entry.rank = 0;
+                }
+            }
 
             if (entry.keywords.empty()) {
                 logger::error("No keywords in line in {}: {}", path.filename().string(), value);
                 continue;
             }
 
-            logger::info("  + [{} Keywords ({}):", path.filename().string(), entry.keywords.size());
+            logger::info("  + {} Keywords ({}):", path.filename().string(), entry.keywords.size());
             for (const auto& kw : entry.keywords) {
                 logger::info("      - {}", kw);
             }
-            logger::info("    Faction: {}", entry.factionEditorID);
+            logger::info("    Faction: {} | Rank: {}", entry.factionEditorID, entry.rank);
 
             DisguiseEntries.push_back(std::move(entry));
             added++;
@@ -127,7 +143,7 @@ namespace Configuration {
             } else if (key == "TimeoutDuration") {
                 try {
                     TimeoutDuration = std::stof(value);
-                    logger::info("TimeoutDuration = {:.1f} seconds", TimeoutDuration);
+                    logger::info("TimeoutDuration = {:.1f} real seconds", TimeoutDuration);
                 } catch (...) {
                     logger::error("Invalid TimeoutDuration value");
                 }
@@ -151,7 +167,6 @@ namespace Configuration {
         IniPath = std::filesystem::path("Data") / "SKSE" / "Plugins" / "SimpleDisguiseSystem.ini";
         auto customFolder = std::filesystem::path("Data") / "SKSE" / "Plugins" / "SimpleDisguiseSystem";
 
-        // Create main INI if missing
         if (!std::filesystem::exists(IniPath)) {
             logger::warn("Main INI not found. Creating default...");
 
@@ -163,34 +178,28 @@ namespace Configuration {
                 out << "FollowerSupport = true\n";
                 out << "DebugMode = false\n\n";
                 out << "[Disguise]\n";
-                out << "; Default examples (optional). Prefer custom INIs in SimpleDisguiseSystem folder.\n";
                 out << "; Format: Keyword1,Keyword2|FactionEditorID\n";
+                out << "; Format: Keyword1,Keyword2|FactionEditorID|Rank\n";
+                out << "; Rank is optional (default 0)\n";
                 out.close();
             }
         }
 
-        // Create custom folder if missing
         if (!std::filesystem::exists(customFolder)) {
             std::error_code ec;
             std::filesystem::create_directories(customFolder, ec);
-            if (ec) {
-                logger::warn("Could not create custom INI folder: {}", customFolder.string());
-            } else {
+            if (!ec) {
                 logger::info("Created custom INI folder: {}", customFolder.string());
             }
         }
 
-        // 1) Settings from main INI only
         if (std::filesystem::exists(IniPath)) {
             logger::info("Loading settings from main INI...");
             LoadGeneralFromMainIni(IniPath);
-
-            // Optional default disguises still allowed in main INI
-            logger::info("Loading disguise entries from main INI...");
+            logger::info("Loading disguise entries from main INI (if any)...");
             LoadDisguiseEntriesFromFile(IniPath);
         }
 
-        // 2) All custom INIs in the subfolder
         if (std::filesystem::exists(customFolder) && std::filesystem::is_directory(customFolder)) {
             logger::info("Scanning custom INI folder: {}", customFolder.string());
 

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -8,12 +9,13 @@ namespace Configuration {
     struct DisguiseEntry {
         std::vector<std::string> keywords;
         std::string factionEditorID;
+        std::int8_t rank = 0;
 
         RE::TESFaction* faction = nullptr;
     };
 
     inline bool EnableMod = true;
-    inline float TimeoutDuration = 120.0f;
+    inline float TimeoutDuration = 5.0f;
     inline bool FollowerSupport = true;
     inline bool DebugMode = false;
 
