@@ -61,42 +61,58 @@ namespace Configuration {
 
             if (key != "Keywords") continue;
 
+            // Keywords|Faction[,Faction...]  OR  Keywords|Faction[,Faction...]|Rank
             auto parts = Split(value, '|');
             if (parts.size() != 2 && parts.size() != 3) {
-                logger::error("Invalid Keywords line in {} (need Keywords|Faction or Keywords|Faction|Rank): {}", path.filename().string(), value);
+                logger::error("Invalid Keywords line in {} (need Keywords|Faction(s) or Keywords|Faction(s)|Rank): {}", path.filename().string(), value);
                 continue;
             }
 
             DisguiseEntry entry;
             entry.keywords = Split(parts[0], ',');
-            entry.factionEditorID = parts[1];
-            entry.rank = 0;
-
-            if (parts.size() == 3) {
-                try {
-                    int parsed = std::stoi(parts[2]);
-                    if (parsed < -128 || parsed > 127) {
-                        logger::error("Rank out of range in {}: {} (using 0)", path.filename().string(), parts[2]);
-                        entry.rank = 0;
-                    } else {
-                        entry.rank = static_cast<std::int8_t>(parsed);
-                    }
-                } catch (...) {
-                    logger::error("Invalid rank in {}: {} (using 0)", path.filename().string(), parts[2]);
-                    entry.rank = 0;
-                }
-            }
 
             if (entry.keywords.empty()) {
                 logger::error("No keywords in line in {}: {}", path.filename().string(), value);
                 continue;
             }
 
+            std::int8_t sharedRank = 0;
+            if (parts.size() == 3) {
+                try {
+                    int parsed = std::stoi(parts[2]);
+                    if (parsed < -128 || parsed > 127) {
+                        logger::error("Rank out of range in {}: {} (using 0)", path.filename().string(), parts[2]);
+                        sharedRank = 0;
+                    } else {
+                        sharedRank = static_cast<std::int8_t>(parsed);
+                    }
+                } catch (...) {
+                    logger::error("Invalid rank in {}: {} (using 0)", path.filename().string(), parts[2]);
+                    sharedRank = 0;
+                }
+            }
+
+            auto factionNames = Split(parts[1], ',');
+            if (factionNames.empty()) {
+                logger::error("No faction in line in {}: {}", path.filename().string(), value);
+                continue;
+            }
+
+            for (const auto& name : factionNames) {
+                FactionTarget ft;
+                ft.editorID = name;
+                ft.rank = sharedRank;
+                entry.factions.push_back(std::move(ft));
+            }
+
             logger::info("  + {} Keywords ({}):", path.filename().string(), entry.keywords.size());
             for (const auto& kw : entry.keywords) {
                 logger::info("      - {}", kw);
             }
-            logger::info("    Faction: {} | Rank: {}", entry.factionEditorID, entry.rank);
+            logger::info("    Factions ({}):", entry.factions.size());
+            for (const auto& ft : entry.factions) {
+                logger::info("      - {} (rank {})", ft.editorID, ft.rank);
+            }
 
             DisguiseEntries.push_back(std::move(entry));
             added++;
@@ -174,13 +190,14 @@ namespace Configuration {
             if (out.is_open()) {
                 out << "[General]\n";
                 out << "EnableMod = true\n";
-                out << "TimeoutDuration = 5\n";
+                out << "TimeoutDuration = 120\n";
                 out << "FollowerSupport = true\n";
                 out << "DebugMode = false\n\n";
                 out << "[Disguise]\n";
                 out << "; Format: Keyword1,Keyword2|FactionEditorID\n";
-                out << "; Format: Keyword1,Keyword2|FactionEditorID|Rank\n";
-                out << "; Rank is optional (default 0)\n";
+                out << "; Format: Keyword1,Keyword2|Faction1,Faction2\n";
+                out << "; Format: Keyword1,Keyword2|Faction1,Faction2|Rank\n";
+                out << "; Rank is optional (default 0), applied to all factions on the line\n";
                 out.close();
             }
         }
@@ -228,11 +245,13 @@ namespace Configuration {
         logger::info("Resolving factions...");
 
         for (auto& entry : DisguiseEntries) {
-            entry.faction = RE::TESForm::LookupByEditorID<RE::TESFaction>(entry.factionEditorID);
-            if (!entry.faction) {
-                logger::error("Faction not found: {}", entry.factionEditorID);
-            } else {
-                logger::info("Found faction: {}", entry.factionEditorID);
+            for (auto& ft : entry.factions) {
+                ft.faction = RE::TESForm::LookupByEditorID<RE::TESFaction>(ft.editorID);
+                if (!ft.faction) {
+                    logger::error("Faction not found: {}", ft.editorID);
+                } else {
+                    logger::info("Found faction: {}", ft.editorID);
+                }
             }
         }
 

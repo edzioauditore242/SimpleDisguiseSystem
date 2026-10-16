@@ -6,12 +6,15 @@
 #include <vector>
 
 namespace Configuration {
+    struct FactionTarget {
+        std::string editorID;
+        std::int8_t rank = 0;
+        RE::TESFaction* faction = nullptr;
+    };
+
     struct DisguiseEntry {
         std::vector<std::string> keywords;
-        std::string factionEditorID;
-        std::int8_t rank = 0;
-
-        RE::TESFaction* faction = nullptr;
+        std::vector<FactionTarget> factions;
     };
 
     inline bool EnableMod = true;

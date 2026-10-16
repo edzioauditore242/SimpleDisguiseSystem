@@ -5,6 +5,7 @@
 #include <format>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 
 #include "Configuration.h"
 #include "Logger.h"
@@ -12,8 +13,6 @@
 namespace DisguiseManager {
     static bool g_playerWasInCombat = false;
     static bool g_pendingPostCombatEvaluate = false;
-
-    // ====================== HELPERS ======================
 
     static float GetCurrentGameTimeSeconds() {
         auto calendar = RE::Calendar::GetSingleton();
@@ -50,7 +49,7 @@ namespace DisguiseManager {
     }
 
     static int CountWornKeywords(RE::Actor* actor, const std::vector<std::string>& required) {
-        if (!actor) return 0;
+        if (!actor || required.empty()) return 0;
 
         int count = 0;
         std::vector<bool> found(required.size(), false);
@@ -77,7 +76,6 @@ namespace DisguiseManager {
         if (!actor || !faction) return;
 
         if (actor->IsInFaction(faction)) {
-            // Update rank if different
             auto currentRank = actor->GetFactionRank(faction, false);
             if (currentRank != rank) {
                 actor->RemoveFromFaction(faction);
@@ -147,7 +145,15 @@ namespace DisguiseManager {
         }
     }
 
-    // ====================== MAIN EVALUATION ======================
+    // Collect all unique factions from config (for evaluation)
+    struct FactionNeed {
+        RE::TESFaction* faction = nullptr;
+        std::string editorID;
+        bool needed = false;
+        std::int8_t bestRank = 0;
+        int bestWorn = 0;
+        int bestRequired = 0;
+    };
 
     void Evaluate(bool isLoadEvaluation) {
         if (!Configuration::EnableMod) {
@@ -166,81 +172,63 @@ namespace DisguiseManager {
 
         const float now = GetCurrentGameTimeSeconds();
 
-        std::unordered_map<RE::FormID, std::vector<const Configuration::DisguiseEntry*>> factionGroups;
+        // formID -> need state
+        std::unordered_map<RE::FormID, FactionNeed> needs;
 
+        // Seed all known factions from config
         for (auto& entry : Configuration::DisguiseEntries) {
-            if (!entry.faction) continue;
-            factionGroups[entry.faction->GetFormID()].push_back(&entry);
+            for (auto& ft : entry.factions) {
+                if (!ft.faction) continue;
+                auto id = ft.faction->GetFormID();
+                auto& n = needs[id];
+                n.faction = ft.faction;
+                n.editorID = ft.editorID;
+            }
         }
 
-        for (auto& [formID, group] : factionGroups) {
-            RE::TESFaction* faction = group[0]->faction;
-            const std::string& factionEditorID = group[0]->factionEditorID;
+        // Each entry: if keywords match, mark ALL its factions as needed (highest rank wins)
+        for (auto& entry : Configuration::DisguiseEntries) {
+            if (entry.keywords.empty() || entry.factions.empty()) continue;
 
-            bool conditionMet = false;
-            int bestWorn = 0;
-            int bestRequired = 0;
-            std::int8_t bestRank = -128;  // track highest rank among matching groups
-            bool anyMatch = false;
+            const int required = static_cast<int>(entry.keywords.size());
+            const int worn = CountWornKeywords(player, entry.keywords);
+            const bool conditionMet = (worn >= required);
 
-            for (auto* entry : group) {
-                const int required = static_cast<int>(entry->keywords.size());
-                const int worn = CountWornKeywords(player, entry->keywords);
+            for (auto& ft : entry.factions) {
+                if (!ft.faction) continue;
+                auto id = ft.faction->GetFormID();
+                auto& n = needs[id];
+                n.faction = ft.faction;
+                n.editorID = ft.editorID;
 
-                if (worn >= required && required > 0) {
-                    conditionMet = true;
-                    anyMatch = true;
-                    bestWorn = worn;
-                    bestRequired = required;
-                    if (entry->rank > bestRank) {
-                        bestRank = entry->rank;
+                if (worn > n.bestWorn) {
+                    n.bestWorn = worn;
+                    n.bestRequired = required;
+                }
+
+                if (conditionMet) {
+                    if (!n.needed || ft.rank > n.bestRank) {
+                        n.bestRank = ft.rank;
                     }
-                } else if (!conditionMet && worn > bestWorn) {
-                    bestWorn = worn;
-                    bestRequired = required;
+                    n.needed = true;
+                    n.bestWorn = worn;
+                    n.bestRequired = required;
                 }
             }
+        }
 
-            // If condition met but all ranks were default-only path with rank 0
-            if (conditionMet && !anyMatch) {
-                bestRank = 0;
-            }
-            if (conditionMet && bestRank == -128) {
-                bestRank = 0;
-            }
-
-            // Fix: when matching, bestRank starts at -128; if only rank 0 matches, bestRank becomes 0
-            if (conditionMet) {
-                bool rankFound = false;
-                std::int8_t highest = 0;
-                bool first = true;
-                for (auto* entry : group) {
-                    const int required = static_cast<int>(entry->keywords.size());
-                    const int worn = CountWornKeywords(player, entry->keywords);
-                    if (worn >= required && required > 0) {
-                        if (first || entry->rank > highest) {
-                            highest = entry->rank;
-                            first = false;
-                        }
-                        rankFound = true;
-                    }
-                }
-                if (rankFound) {
-                    bestRank = highest;
-                } else {
-                    bestRank = 0;
-                }
-            }
+        for (auto& [formID, n] : needs) {
+            if (!n.faction) continue;
 
             auto& state = ActiveDisguises[formID];
-            state.faction = faction;
+            state.faction = n.faction;
 
             if (Configuration::DebugMode) {
-                logger::info("Faction: {} | Best Worn: {}/{} | Condition: {} | Active: {} | Timer: {} | Rank: {}", factionEditorID, bestWorn, bestRequired, conditionMet, state.isActive, state.removeAtGameTime > 0.0f ? "YES" : "no",
-                             conditionMet ? bestRank : state.appliedRank);
+                logger::info("Faction: {} | Best Worn: {}/{} | Condition: {} | Active: {} | Timer: {} | Rank: {}", n.editorID, n.bestWorn, n.bestRequired, n.needed, state.isActive, state.removeAtGameTime > 0.0f ? "YES" : "no",
+                             n.needed ? n.bestRank : state.appliedRank);
             }
 
-            if (conditionMet) {
+            if (n.needed) {
                 if (state.removeAtGameTime > 0.0f) {
                     state.removeAtGameTime = -1.0f;
                     if (Configuration::DebugMode) {
@@ -248,20 +236,20 @@ namespace DisguiseManager {
                     }
                 }
 
-                const bool needApply = !state.isActive || !player->IsInFaction(faction) || state.appliedRank != bestRank;
+                const bool needApply = !state.isActive || !player->IsInFaction(n.faction) || state.appliedRank != n.bestRank;
 
                 if (needApply) {
-                    ApplyToPlayerAndFollowers(faction, true, bestRank);
+                    ApplyToPlayerAndFollowers(n.faction, true, n.bestRank);
                     state.isActive = true;
-                    state.appliedRank = bestRank;
+                    state.appliedRank = n.bestRank;
                 }
             } else {
                 if (isLoadEvaluation) {
-                    if (player->IsInFaction(faction)) {
+                    if (player->IsInFaction(n.faction)) {
                         if (Configuration::DebugMode) {
                             logger::info("  → Load evaluation: condition not met → removing faction immediately");
                         }
-                        ApplyToPlayerAndFollowers(faction, false);
+                        ApplyToPlayerAndFollowers(n.faction, false);
                     }
                     state.isActive = false;
                     state.removeAtGameTime = -1.0f;
@@ -291,8 +279,6 @@ namespace DisguiseManager {
         }
         Evaluate(false);
     }
-
-    // ====================== TIMER + COMBAT CHECK ======================
 
     void UpdateTimers() {
         if (!Configuration::EnableMod) return;
@@ -340,8 +326,6 @@ namespace DisguiseManager {
         }
     }
 
-    // ====================== EQUIP EVENT ======================
-
     class EquipEventSink : public RE::BSTEventSink<RE::TESEquipEvent> {
     public:
         RE::BSEventNotifyControl ProcessEvent(const RE::TESEquipEvent* ev, RE::BSTEventSource<RE::TESEquipEvent>*) override {
@@ -366,8 +350,6 @@ namespace DisguiseManager {
 
     static EquipEventSink g_equipSink;
 
-    // ====================== HIT EVENT ======================
-
     class HitEventSink : public RE::BSTEventSink<RE::TESHitEvent> {
     public:
         RE::BSEventNotifyControl ProcessEvent(const RE::TESHitEvent* ev, RE::BSTEventSource<RE::TESHitEvent>*) override {
@@ -378,65 +360,82 @@ namespace DisguiseManager {
             if (ev->cause.get() != player) return RE::BSEventNotifyControl::kContinue;
 
             auto target = ev->target->As<RE::Actor>();
-            if (!target) return RE::BSEventNotifyControl::kContinue;
+            if (!target || target->IsDead()) return RE::BSEventNotifyControl::kContinue;
 
-            if (target->IsDead()) {
+            // Hit on any faction in a multi-faction line → remove ALL factions on that line
+            std::unordered_set<RE::FormID> toRemove;
+
+            for (auto& entry : Configuration::DisguiseEntries) {
+                bool targetInThisEntry = false;
+                for (auto& ft : entry.factions) {
+                    if (ft.faction && target->IsInFaction(ft.faction)) {
+                        targetInThisEntry = true;
+                        break;
+                    }
+                }
+                if (!targetInThisEntry) continue;
+
+                for (auto& ft : entry.factions) {
+                    if (!ft.faction) continue;
+                    auto id = ft.faction->GetFormID();
+                    auto it = ActiveDisguises.find(id);
+                    if (it != ActiveDisguises.end() && it->second.isActive) {
+                        toRemove.insert(id);
+                    }
+                }
+            }
+
+            if (toRemove.empty()) {
                 return RE::BSEventNotifyControl::kContinue;
             }
 
-            bool removedAny = false;
+            if (Configuration::DebugMode) {
+                logger::info("Player attacked member of active disguise faction → removing linked disguise faction(s)");
+            }
 
-            for (auto& [formID, state] : ActiveDisguises) {
-                if (state.isActive && state.faction && target->IsInFaction(state.faction)) {
-                    if (Configuration::DebugMode) {
-                        logger::info("Player attacked member of active disguise faction → removing disguise immediately");
-                    }
+            for (auto id : toRemove) {
+                auto& state = ActiveDisguises[id];
+                if (state.faction) {
                     ApplyToPlayerAndFollowers(state.faction, false);
-                    state.isActive = false;
-                    state.removeAtGameTime = -1.0f;
-                    state.appliedRank = 0;
-                    removedAny = true;
                 }
+                state.isActive = false;
+                state.removeAtGameTime = -1.0f;
+                state.appliedRank = 0;
             }
 
-            if (removedAny) {
-                g_pendingPostCombatEvaluate = true;
+            g_pendingPostCombatEvaluate = true;
+            if (Configuration::DebugMode) {
+                logger::info("Disguise removed by hit → pending re-evaluate when combat ends");
+            }
 
-                if (Configuration::DebugMode) {
-                    logger::info("Disguise removed by hit → pending re-evaluate when combat ends");
-                }
+            std::thread([]() {
+                std::this_thread::sleep_for(std::chrono::seconds(4));
+                SKSE::GetTaskInterface()->AddTask([]() {
+                    if (!Configuration::EnableMod) return;
 
-                std::thread([]() {
-                    std::this_thread::sleep_for(std::chrono::seconds(4));
-                    SKSE::GetTaskInterface()->AddTask([]() {
-                        if (!Configuration::EnableMod) return;
+                    auto player = RE::PlayerCharacter::GetSingleton();
+                    if (!player) return;
 
-                        auto player = RE::PlayerCharacter::GetSingleton();
-                        if (!player) return;
-
-                        if (player->IsInCombat()) {
-                            if (Configuration::DebugMode) {
-                                logger::info("Post-hit check: still in combat → keep waiting for combat end");
-                            }
-                            return;
-                        }
-
-                        g_pendingPostCombatEvaluate = false;
+                    if (player->IsInCombat()) {
                         if (Configuration::DebugMode) {
-                            logger::info("Post-hit check: not in combat → re-evaluating disguise");
+                            logger::info("Post-hit check: still in combat → keep waiting for combat end");
                         }
-                        Evaluate(false);
-                    });
-                }).detach();
-            }
+                        return;
+                    }
+
+                    g_pendingPostCombatEvaluate = false;
+                    if (Configuration::DebugMode) {
+                        logger::info("Post-hit check: not in combat → re-evaluating disguise");
+                    }
+                    Evaluate(false);
+                });
+            }).detach();
 
             return RE::BSEventNotifyControl::kContinue;
         }
     };
 
     static HitEventSink g_hitSink;
-
-    // ====================== PERIODIC TIMER CHECK ======================
 
     static void ScheduleTimerCheck() {
         std::thread([]() {

@@ -1,7 +1,9 @@
 ﻿#include "UI.h"
 
+#include <cstdint>
 #include <fstream>
 #include <sstream>
+#include <string>
 #include <unordered_map>
 
 #include "Configuration.h"
@@ -114,7 +116,7 @@ namespace UI {
         ImGuiMCP::Spacing();
 
         ImGuiMCP::Text("%s", Translation::Get("Settings_Timeout"));
-        ImGuiMCP::SliderFloat("##TimeoutDuration", &Configuration::TimeoutDuration, 1.0f, 600.0f, "%.0f");
+        ImGuiMCP::SliderFloat("##TimeoutDuration", &Configuration::TimeoutDuration, 10.0f, 1800.0f, "%.0f");
 
         ImGuiMCP::Spacing();
 
@@ -155,7 +157,19 @@ namespace UI {
                 auto& entry = Configuration::DisguiseEntries[i];
 
                 ImGuiMCP::Text("%s #%zu", Translation::Get("Settings_Entry"), i + 1);
-                ImGuiMCP::BulletText("%s: %s", Translation::Get("Settings_Faction"), entry.factionEditorID.c_str());
+
+                // Factions (one or more)
+                std::string factionLine;
+                for (size_t f = 0; f < entry.factions.size(); ++f) {
+                    if (f > 0) factionLine += ", ";
+                    factionLine += entry.factions[f].editorID;
+                    factionLine += " (rank ";
+                    factionLine += std::to_string(static_cast<int>(entry.factions[f].rank));
+                    factionLine += ")";
+                }
+                ImGuiMCP::BulletText("%s: %s", Translation::Get("Settings_Faction"), factionLine.c_str());
+
+                // Keywords on one line
                 std::string keywordLine;
                 for (size_t k = 0; k < entry.keywords.size(); ++k) {
                     if (k > 0) keywordLine += ", ";
@@ -163,7 +177,15 @@ namespace UI {
                 }
                 ImGuiMCP::BulletText("%s: %s", Translation::Get("Settings_Keywords"), keywordLine.c_str());
 
-                if (entry.faction) {
+                bool formsOk = !entry.factions.empty();
+                for (auto& ft : entry.factions) {
+                    if (!ft.faction) {
+                        formsOk = false;
+                        break;
+                    }
+                }
+
+                if (formsOk) {
                     ImGuiMCP::TextColored(ImGuiMCP::ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "%s", Translation::Get("Settings_FormOK"));
                 } else {
                     ImGuiMCP::TextColored(ImGuiMCP::ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s", Translation::Get("Settings_FormMissing"));
@@ -199,29 +221,42 @@ namespace UI {
             return;
         }
 
-        std::unordered_map<RE::FormID, Configuration::DisguiseEntry*> uniqueFactions;
+        // One row per unique faction
+        std::unordered_map<RE::FormID, std::string> uniqueFactions;
         for (auto& entry : Configuration::DisguiseEntries) {
-            if (entry.faction) {
-                uniqueFactions[entry.faction->GetFormID()] = &entry;
+            for (auto& ft : entry.factions) {
+                if (ft.faction) {
+                    uniqueFactions[ft.faction->GetFormID()] = ft.editorID;
+                }
             }
         }
 
-        for (auto& [formID, entry] : uniqueFactions) {
-            bool inFaction = player->IsInFaction(entry->faction);
-            auto it = DisguiseManager::ActiveDisguises.find(formID);
-            bool isActive = false;
-            bool hasTimer = false;
+        if (uniqueFactions.empty()) {
+            ImGuiMCP::Text("%s", Translation::Get("Settings_NoEntries"));
+        } else {
+            for (auto& [formID, editorID] : uniqueFactions) {
+                auto* faction = RE::TESForm::LookupByID<RE::TESFaction>(formID);
+                if (!faction) continue;
 
-            if (it != DisguiseManager::ActiveDisguises.end()) {
-                isActive = it->second.isActive;
-                hasTimer = it->second.removeAtGameTime > 0.0f;
+                bool inFaction = player->IsInFaction(faction);
+                auto it = DisguiseManager::ActiveDisguises.find(formID);
+                bool isActive = false;
+                bool hasTimer = false;
+                std::int8_t appliedRank = 0;
+
+                if (it != DisguiseManager::ActiveDisguises.end()) {
+                    isActive = it->second.isActive;
+                    hasTimer = it->second.removeAtGameTime > 0.0f;
+                    appliedRank = it->second.appliedRank;
+                }
+
+                ImGuiMCP::Text("%s", editorID.c_str());
+                ImGuiMCP::BulletText("%s: %s", Translation::Get("Debug_InFaction"), inFaction ? "YES" : "no");
+                ImGuiMCP::BulletText("%s: %s", Translation::Get("Debug_Timer"), hasTimer ? "YES" : "no");
+                ImGuiMCP::BulletText("%s: %d", Translation::Get("Debug_Rank"), static_cast<int>(appliedRank));
+                ImGuiMCP::BulletText("%s: %s", Translation::Get("Debug_ModActive"), isActive ? "YES" : "no");
+                ImGuiMCP::Separator();
             }
-
-            ImGuiMCP::Text("%s", entry->factionEditorID.c_str());
-            ImGuiMCP::BulletText("%s: %s", Translation::Get("Debug_InFaction"), inFaction ? "YES" : "no");
-            ImGuiMCP::BulletText("%s: %s", Translation::Get("Debug_Timer"), hasTimer ? "YES" : "no");
-            ImGuiMCP::BulletText("%s: %s", Translation::Get("Debug_ModActive"), isActive ? "YES" : "no");
-            ImGuiMCP::Separator();
         }
 
         ImGuiMCP::Spacing();
