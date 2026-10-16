@@ -61,7 +61,6 @@ namespace Configuration {
 
             if (key != "Keywords") continue;
 
-            // Keywords|Faction[,Faction...]  OR  Keywords|Faction[,Faction...]|Rank
             auto parts = Split(value, '|');
             if (parts.size() != 2 && parts.size() != 3) {
                 logger::error("Invalid Keywords line in {} (need Keywords|Faction(s) or Keywords|Faction(s)|Rank): {}", path.filename().string(), value);
@@ -151,10 +150,13 @@ namespace Configuration {
             std::string key = Trim(line.substr(0, eqPos));
             std::string value = Trim(line.substr(eqPos + 1));
 
+            auto toBool = [](std::string v) {
+                std::transform(v.begin(), v.end(), v.begin(), ::tolower);
+                return v == "true" || v == "1";
+            };
+
             if (key == "EnableMod") {
-                std::string lower = value;
-                std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
-                EnableMod = (lower == "true" || lower == "1");
+                EnableMod = toBool(value);
                 logger::info("EnableMod = {}", EnableMod);
             } else if (key == "TimeoutDuration") {
                 try {
@@ -164,15 +166,21 @@ namespace Configuration {
                     logger::error("Invalid TimeoutDuration value");
                 }
             } else if (key == "FollowerSupport") {
-                std::string lower = value;
-                std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
-                FollowerSupport = (lower == "true" || lower == "1");
+                FollowerSupport = toBool(value);
                 logger::info("FollowerSupport = {}", FollowerSupport);
             } else if (key == "DebugMode") {
-                std::string lower = value;
-                std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
-                DebugMode = (lower == "true" || lower == "1");
+                DebugMode = toBool(value);
                 logger::info("DebugMode = {}", DebugMode);
+            } else if (key == "EnableArmedTimer") {
+                EnableArmedTimer = toBool(value);
+                logger::info("EnableArmedTimer = {}", EnableArmedTimer);
+            } else if (key == "ArmedTimer") {
+                try {
+                    ArmedTimerDuration = std::stof(value);
+                    logger::info("ArmedTimer = {:.1f} real seconds", ArmedTimerDuration);
+                } catch (...) {
+                    logger::error("Invalid ArmedTimer value");
+                }
             }
         }
     }
@@ -192,12 +200,13 @@ namespace Configuration {
                 out << "EnableMod = true\n";
                 out << "TimeoutDuration = 120\n";
                 out << "FollowerSupport = true\n";
-                out << "DebugMode = false\n\n";
+                out << "DebugMode = false\n";
+                out << "EnableArmedTimer = false\n";
+                out << "ArmedTimer = 5\n\n";
                 out << "[Disguise]\n";
                 out << "; Format: Keyword1,Keyword2|FactionEditorID\n";
                 out << "; Format: Keyword1,Keyword2|Faction1,Faction2\n";
                 out << "; Format: Keyword1,Keyword2|Faction1,Faction2|Rank\n";
-                out << "; Rank is optional (default 0), applied to all factions on the line\n";
                 out.close();
             }
         }

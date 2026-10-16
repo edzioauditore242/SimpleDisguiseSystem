@@ -22,6 +22,9 @@ namespace Configuration {
     inline bool FollowerSupport = true;
     inline bool DebugMode = false;
 
+    inline bool EnableArmedTimer = false;
+    inline float ArmedTimerDuration = 5.0f;
+
     inline std::vector<DisguiseEntry> DisguiseEntries;
     inline std::filesystem::path IniPath;
 

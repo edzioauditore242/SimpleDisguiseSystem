@@ -48,6 +48,14 @@ namespace DisguiseManager {
         return std::format("FormID:{:08X}", faction->GetFormID());
     }
 
+    static bool IsWeaponDrawn(RE::Actor* actor) {
+        if (!actor) return false;
+        if (auto* state = actor->AsActorState()) {
+            return state->IsWeaponDrawn();
+        }
+        return false;
+    }
+
     static int CountWornKeywords(RE::Actor* actor, const std::vector<std::string>& required) {
         if (!actor || required.empty()) return 0;
 
@@ -130,22 +138,64 @@ namespace DisguiseManager {
         }
     }
 
+    static void ClearArmedTimer(ActiveDisguise& state) {
+        if (state.armedAtGameTime > 0.0f && Configuration::DebugMode) {
+            logger::info("Armed timer cancelled for {}", GetFactionLabel(state.faction));
+        }
+        state.armedAtGameTime = -1.0f;
+    }
+
+    static void RemoveFactionAndLinked(RE::FormID triggerId) {
+        std::unordered_set<RE::FormID> toRemove;
+        toRemove.insert(triggerId);
+
+        for (auto& entry : Configuration::DisguiseEntries) {
+            bool contains = false;
+            for (auto& ft : entry.factions) {
+                if (ft.faction && ft.faction->GetFormID() == triggerId) {
+                    contains = true;
+                    break;
+                }
+            }
+            if (!contains) continue;
+
+            for (auto& ft : entry.factions) {
+                if (ft.faction) {
+                    toRemove.insert(ft.faction->GetFormID());
+                }
+            }
+        }
+
+        for (auto id : toRemove) {
+            auto it = ActiveDisguises.find(id);
+            if (it == ActiveDisguises.end()) continue;
+            auto& state = it->second;
+            if (state.faction) {
+                ApplyToPlayerAndFollowers(state.faction, false);
+            }
+            state.isActive = false;
+            state.removeAtGameTime = -1.0f;
+            state.armedAtGameTime = -1.0f;
+            state.appliedRank = 0;
+        }
+    }
+
     void RemoveAllActiveDisguises() {
         if (Configuration::DebugMode) {
             logger::info("Removing all active disguise factions (mod disabled or cleanup)");
         }
 
         for (auto& [formID, state] : ActiveDisguises) {
-            if (state.faction && (state.isActive || state.removeAtGameTime > 0.0f)) {
+            if (state.faction && (state.isActive || state.removeAtGameTime > 0.0f || state.armedAtGameTime > 0.0f)) {
                 ApplyToPlayerAndFollowers(state.faction, false);
             }
             state.isActive = false;
             state.removeAtGameTime = -1.0f;
+            state.armedAtGameTime = -1.0f;
             state.appliedRank = 0;
         }
     }
 
-    // Collect all unique factions from config (for evaluation)
     struct FactionNeed {
         RE::TESFaction* faction = nullptr;
         std::string editorID;
@@ -172,10 +222,8 @@ namespace DisguiseManager {
 
         const float now = GetCurrentGameTimeSeconds();
 
-        // formID -> need state
         std::unordered_map<RE::FormID, FactionNeed> needs;
 
-        // Seed all known factions from config
         for (auto& entry : Configuration::DisguiseEntries) {
             for (auto& ft : entry.factions) {
                 if (!ft.faction) continue;
@@ -186,7 +234,6 @@ namespace DisguiseManager {
             }
         }
 
-        // Each entry: if keywords match, mark ALL its factions as needed (highest rank wins)
         for (auto& entry : Configuration::DisguiseEntries) {
             if (entry.keywords.empty() || entry.factions.empty()) continue;
 
@@ -224,8 +271,8 @@ namespace DisguiseManager {
             state.faction = n.faction;
 
             if (Configuration::DebugMode) {
-                logger::info("Faction: {} | Best Worn: {}/{} | Condition: {} | Active: {} | Timer: {} | Rank: {}", n.editorID, n.bestWorn, n.bestRequired, n.needed, state.isActive, state.removeAtGameTime > 0.0f ? "YES" : "no",
-                             n.needed ? n.bestRank : state.appliedRank);
+                logger::info("Faction: {} | Best Worn: {}/{} | Condition: {} | Active: {} | Timer: {} | Armed: {} | Rank: {}", n.editorID, n.bestWorn, n.bestRequired, n.needed, state.isActive, state.removeAtGameTime > 0.0f ? "YES" : "no",
+                             state.armedAtGameTime > 0.0f ? "YES" : "no", n.needed ? n.bestRank : state.appliedRank);
             }
 
             if (n.needed) {
@@ -244,6 +291,8 @@ namespace DisguiseManager {
                     state.appliedRank = n.bestRank;
                 }
             } else {
+                ClearArmedTimer(state);
+
                 if (isLoadEvaluation) {
                     if (player->IsInFaction(n.faction)) {
                         if (Configuration::DebugMode) {
@@ -280,6 +329,31 @@ namespace DisguiseManager {
         Evaluate(false);
     }
 
+    static bool HasArmedWatcher(RE::Actor* player, RE::TESFaction* faction) {
+        if (!player || !faction) return false;
+
+        auto processLists = RE::ProcessLists::GetSingleton();
+        if (!processLists) return false;
+
+        for (auto& handle : processLists->highActorHandles) {
+            auto npc = handle.get();
+            if (!npc || npc.get() == player) continue;
+            if (npc->IsDead()) continue;
+            if (npc->IsPlayerTeammate()) continue;
+            if (!npc->IsInFaction(faction)) continue;
+
+            // NPC must not be in combat
+            if (npc->IsInCombat()) continue;
+
+            // NPC must see the player
+            bool losExtra = false;
+            if (!npc->HasLineOfSight(player, losExtra)) continue;
+
+            return true;
+        }
+        return false;
+    }
+
     void UpdateTimers() {
         if (!Configuration::EnableMod) return;
 
@@ -313,16 +387,73 @@ namespace DisguiseManager {
             }
         }
 
+        // ----- Removal timeout -----
+        std::vector<RE::FormID> removalExpired;
         for (auto& [formID, state] : ActiveDisguises) {
             if (state.isActive && state.removeAtGameTime > 0.0f && now >= state.removeAtGameTime) {
-                if (Configuration::DebugMode) {
-                    logger::info("Removal timer expired → removing faction");
-                }
-                ApplyToPlayerAndFollowers(state.faction, false);
-                state.isActive = false;
-                state.removeAtGameTime = -1.0f;
-                state.appliedRank = 0;
+                removalExpired.push_back(formID);
             }
+        }
+        for (auto id : removalExpired) {
+            if (Configuration::DebugMode) {
+                logger::info("Removal timer expired → removing faction (and linked)");
+            }
+            RemoveFactionAndLinked(id);
+        }
+
+        // ----- Armed timer -----
+        if (!Configuration::EnableArmedTimer || !player) {
+            for (auto& [formID, state] : ActiveDisguises) {
+                ClearArmedTimer(state);
+            }
+            return;
+        }
+
+        const bool playerInCombat = player->IsInCombat();
+        const bool weaponDrawn = IsWeaponDrawn(player);
+
+        std::vector<RE::FormID> armedExpired;
+
+        for (auto& [formID, state] : ActiveDisguises) {
+            if (!state.isActive || !state.faction) {
+                ClearArmedTimer(state);
+                continue;
+            }
+
+            // Timeout already running → no armed timer
+            if (state.removeAtGameTime > 0.0f) {
+                ClearArmedTimer(state);
+                continue;
+            }
+
+            // Player in combat or weapons sheathed → cancel
+            if (playerInCombat || !weaponDrawn) {
+                ClearArmedTimer(state);
+                continue;
+            }
+
+            const bool watched = HasArmedWatcher(player, state.faction);
+
+            if (watched) {
+                if (state.armedAtGameTime < 0.0f) {
+                    const float gameDuration = RealSecondsToGameSeconds(Configuration::ArmedTimerDuration);
+                    state.armedAtGameTime = now + gameDuration;
+                    if (Configuration::DebugMode) {
+                        logger::info("Armed timer started for {} ({:.0f} real sec ≈ {:.0f} game sec)", GetFactionLabel(state.faction), Configuration::ArmedTimerDuration, gameDuration);
+                    }
+                } else if (now >= state.armedAtGameTime) {
+                    armedExpired.push_back(formID);
+                }
+            } else {
+                ClearArmedTimer(state);
+            }
+        }
+
+        for (auto id : armedExpired) {
+            if (Configuration::DebugMode) {
+                logger::info("Armed timer expired → removing faction (and linked)");
+            }
+            RemoveFactionAndLinked(id);
         }
     }
 
@@ -362,7 +493,6 @@ namespace DisguiseManager {
             auto target = ev->target->As<RE::Actor>();
             if (!target || target->IsDead()) return RE::BSEventNotifyControl::kContinue;
 
-            // Hit on any faction in a multi-faction line → remove ALL factions on that line
             std::unordered_set<RE::FormID> toRemove;
 
             for (auto& entry : Configuration::DisguiseEntries) {
@@ -400,6 +530,7 @@ namespace DisguiseManager {
                 }
                 state.isActive = false;
                 state.removeAtGameTime = -1.0f;
+                state.armedAtGameTime = -1.0f;
                 state.appliedRank = 0;
             }
 

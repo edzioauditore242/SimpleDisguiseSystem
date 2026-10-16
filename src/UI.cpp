@@ -28,6 +28,8 @@ namespace UI {
         bool timeoutWritten = false;
         bool followerWritten = false;
         bool debugWritten = false;
+        bool armedEnableWritten = false;
+        bool armedTimerWritten = false;
 
         while (std::getline(in, line)) {
             std::string trimmed = line;
@@ -42,7 +44,7 @@ namespace UI {
             }
 
             if (inGeneral) {
-                if (trimmed.find("EnableMod") != std::string::npos) {
+                if (trimmed.find("EnableMod") != std::string::npos && trimmed.find("EnableArmed") == std::string::npos) {
                     buffer << "EnableMod = " << (Configuration::EnableMod ? "true" : "false") << "\n";
                     enableWritten = true;
                     continue;
@@ -62,18 +64,30 @@ namespace UI {
                     debugWritten = true;
                     continue;
                 }
+                if (trimmed.find("EnableArmedTimer") != std::string::npos) {
+                    buffer << "EnableArmedTimer = " << (Configuration::EnableArmedTimer ? "true" : "false") << "\n";
+                    armedEnableWritten = true;
+                    continue;
+                }
+                if (trimmed.find("ArmedTimer") != std::string::npos && trimmed.find("EnableArmed") == std::string::npos) {
+                    buffer << "ArmedTimer = " << Configuration::ArmedTimerDuration << "\n";
+                    armedTimerWritten = true;
+                    continue;
+                }
             }
 
             buffer << line << "\n";
         }
         in.close();
 
-        if (!enableWritten || !timeoutWritten || !followerWritten || !debugWritten) {
+        if (!enableWritten || !timeoutWritten || !followerWritten || !debugWritten || !armedEnableWritten || !armedTimerWritten) {
             buffer << "\n[General]\n";
             if (!enableWritten) buffer << "EnableMod = " << (Configuration::EnableMod ? "true" : "false") << "\n";
             if (!timeoutWritten) buffer << "TimeoutDuration = " << Configuration::TimeoutDuration << "\n";
             if (!followerWritten) buffer << "FollowerSupport = " << (Configuration::FollowerSupport ? "true" : "false") << "\n";
             if (!debugWritten) buffer << "DebugMode = " << (Configuration::DebugMode ? "true" : "false") << "\n";
+            if (!armedEnableWritten) buffer << "EnableArmedTimer = " << (Configuration::EnableArmedTimer ? "true" : "false") << "\n";
+            if (!armedTimerWritten) buffer << "ArmedTimer = " << Configuration::ArmedTimerDuration << "\n";
         }
 
         std::ofstream out(Configuration::IniPath);
@@ -116,7 +130,7 @@ namespace UI {
         ImGuiMCP::Spacing();
 
         ImGuiMCP::Text("%s", Translation::Get("Settings_Timeout"));
-        ImGuiMCP::SliderFloat("##TimeoutDuration", &Configuration::TimeoutDuration, 10.0f, 1800.0f, "%.0f");
+        ImGuiMCP::SliderFloat("##TimeoutDuration", &Configuration::TimeoutDuration, 1.0f, 600.0f, "%.0f");
 
         ImGuiMCP::Spacing();
 
@@ -124,6 +138,22 @@ namespace UI {
         if (ImGuiMCP::Checkbox(Translation::Get("Settings_FollowerSupport"), &follower)) {
             Configuration::FollowerSupport = follower;
         }
+
+        ImGuiMCP::Spacing();
+        ImGuiMCP::Separator();
+        ImGuiMCP::Spacing();
+
+        bool armed = Configuration::EnableArmedTimer;
+        if (ImGuiMCP::Checkbox(Translation::Get("Settings_EnableArmedTimer"), &armed)) {
+            Configuration::EnableArmedTimer = armed;
+            if (!armed) {
+                // Clear armed timers by running update path
+                DisguiseManager::UpdateTimers();
+            }
+        }
+
+        ImGuiMCP::Text("%s", Translation::Get("Settings_ArmedTimer"));
+        ImGuiMCP::SliderFloat("##ArmedTimer", &Configuration::ArmedTimerDuration, 1.0f, 60.0f, "%.0f");
 
         ImGuiMCP::Spacing();
         ImGuiMCP::Separator();
@@ -158,7 +188,6 @@ namespace UI {
 
                 ImGuiMCP::Text("%s #%zu", Translation::Get("Settings_Entry"), i + 1);
 
-                // Factions (one or more)
                 std::string factionLine;
                 for (size_t f = 0; f < entry.factions.size(); ++f) {
                     if (f > 0) factionLine += ", ";
@@ -169,7 +198,6 @@ namespace UI {
                 }
                 ImGuiMCP::BulletText("%s: %s", Translation::Get("Settings_Faction"), factionLine.c_str());
 
-                // Keywords on one line
                 std::string keywordLine;
                 for (size_t k = 0; k < entry.keywords.size(); ++k) {
                     if (k > 0) keywordLine += ", ";
@@ -221,7 +249,6 @@ namespace UI {
             return;
         }
 
-        // One row per unique faction
         std::unordered_map<RE::FormID, std::string> uniqueFactions;
         for (auto& entry : Configuration::DisguiseEntries) {
             for (auto& ft : entry.factions) {
@@ -242,11 +269,13 @@ namespace UI {
                 auto it = DisguiseManager::ActiveDisguises.find(formID);
                 bool isActive = false;
                 bool hasTimer = false;
+                bool hasArmed = false;
                 std::int8_t appliedRank = 0;
 
                 if (it != DisguiseManager::ActiveDisguises.end()) {
                     isActive = it->second.isActive;
                     hasTimer = it->second.removeAtGameTime > 0.0f;
+                    hasArmed = it->second.armedAtGameTime > 0.0f;
                     appliedRank = it->second.appliedRank;
                 }
 
@@ -254,6 +283,7 @@ namespace UI {
                 ImGuiMCP::BulletText("%s: %s", Translation::Get("Debug_InFaction"), inFaction ? "YES" : "no");
                 ImGuiMCP::BulletText("%s: %s", Translation::Get("Debug_Timer"), hasTimer ? "YES" : "no");
                 ImGuiMCP::BulletText("%s: %d", Translation::Get("Debug_Rank"), static_cast<int>(appliedRank));
+                ImGuiMCP::BulletText("%s: %s", Translation::Get("Debug_ArmedTimer"), hasArmed ? "YES" : "no");
                 ImGuiMCP::BulletText("%s: %s", Translation::Get("Debug_ModActive"), isActive ? "YES" : "no");
                 ImGuiMCP::Separator();
             }
