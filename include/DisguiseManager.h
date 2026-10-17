@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <unordered_map>
+#include <unordered_set>
 
 #include "Configuration.h"
 
@@ -12,6 +13,8 @@ namespace DisguiseManager {
         float armedAtGameTime = -1.0f;
         bool isActive = false;
         std::int8_t appliedRank = 0;
+
+        std::unordered_set<RE::FormID> appliedActors;
     };
 
     inline std::unordered_map<RE::FormID, ActiveDisguise> ActiveDisguises;

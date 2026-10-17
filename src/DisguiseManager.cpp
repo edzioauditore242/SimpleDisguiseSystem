@@ -6,6 +6,7 @@
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 #include "Configuration.h"
 #include "Logger.h"
@@ -111,15 +112,19 @@ namespace DisguiseManager {
         }
     }
 
-    static void ApplyToPlayerAndFollowers(RE::TESFaction* faction, bool add, std::int8_t rank = 0) {
+    static RE::Actor* LookupActorByFormID(RE::FormID formID) {
+        auto* form = RE::TESForm::LookupByID(formID);
+        if (!form) return nullptr;
+        return form->As<RE::Actor>();
+    }
+
+    // Add faction to player (+ followers if enabled) and record FormIDs
+    static void ApplyAdd(ActiveDisguise& state, RE::TESFaction* faction, std::int8_t rank) {
         auto player = RE::PlayerCharacter::GetSingleton();
         if (!player || !faction) return;
 
-        if (add) {
-            AddFactionToActor(player, faction, rank);
-        } else {
-            RemoveFactionFromActor(player, faction);
-        }
+        AddFactionToActor(player, faction, rank);
+        state.appliedActors.insert(player->GetFormID());
 
         if (Configuration::FollowerSupport) {
             auto processLists = RE::ProcessLists::GetSingleton();
@@ -127,12 +132,83 @@ namespace DisguiseManager {
                 for (auto& handle : processLists->highActorHandles) {
                     auto actor = handle.get();
                     if (actor && actor->IsPlayerTeammate()) {
-                        if (add) {
-                            AddFactionToActor(actor.get(), faction, rank);
-                        } else {
-                            RemoveFactionFromActor(actor.get(), faction);
-                        }
+                        AddFactionToActor(actor.get(), faction, rank);
+                        state.appliedActors.insert(actor->GetFormID());
                     }
+                }
+            }
+        }
+    }
+
+    // Remove faction from every actor we previously applied it to
+    static void ApplyRemoveTracked(ActiveDisguise& state) {
+        if (!state.faction) {
+            state.appliedActors.clear();
+            return;
+        }
+
+        for (auto formID : state.appliedActors) {
+            if (auto* actor = LookupActorByFormID(formID)) {
+                RemoveFactionFromActor(actor, state.faction);
+            }
+        }
+        state.appliedActors.clear();
+    }
+
+    // Remove faction from dismissed followers (no longer teammates), keep player + current teammates
+    static void CleanupDismissedFollowers(ActiveDisguise& state) {
+        if (!state.faction || state.appliedActors.empty()) return;
+
+        auto player = RE::PlayerCharacter::GetSingleton();
+        if (!player) return;
+
+        const RE::FormID playerID = player->GetFormID();
+        std::vector<RE::FormID> toErase;
+
+        for (auto formID : state.appliedActors) {
+            if (formID == playerID) continue;
+
+            auto* actor = LookupActorByFormID(formID);
+            if (!actor) {
+                // Actor unloaded / gone — drop tracking
+                toErase.push_back(formID);
+                continue;
+            }
+
+            if (!actor->IsPlayerTeammate()) {
+                RemoveFactionFromActor(actor, state.faction);
+                toErase.push_back(formID);
+                if (Configuration::DebugMode) {
+                    logger::info("Cleaned disguise faction {} from dismissed follower {}", GetFactionLabel(state.faction), actor->GetDisplayFullName());
+                }
+            }
+        }
+
+        for (auto id : toErase) {
+            state.appliedActors.erase(id);
+        }
+    }
+
+    // If FollowerSupport is on and disguise is active, also add any new teammates
+    static void SyncCurrentFollowers(ActiveDisguise& state, std::int8_t rank) {
+        if (!Configuration::FollowerSupport || !state.isActive || !state.faction) return;
+
+        auto processLists = RE::ProcessLists::GetSingleton();
+        if (!processLists) return;
+
+        for (auto& handle : processLists->highActorHandles) {
+            auto actor = handle.get();
+            if (!actor || !actor->IsPlayerTeammate()) continue;
+
+            const auto id = actor->GetFormID();
+            if (state.appliedActors.contains(id)) {
+                // Already tracked — refresh rank if needed
+                AddFactionToActor(actor.get(), state.faction, rank);
+            } else {
+                AddFactionToActor(actor.get(), state.faction, rank);
+                state.appliedActors.insert(id);
+                if (Configuration::DebugMode) {
+                    logger::info("Added disguise faction {} to new follower {}", GetFactionLabel(state.faction), actor->GetDisplayFullName());
                 }
             }
         }
@@ -170,9 +246,7 @@ namespace DisguiseManager {
             auto it = ActiveDisguises.find(id);
             if (it == ActiveDisguises.end()) continue;
             auto& state = it->second;
-            if (state.faction) {
-                ApplyToPlayerAndFollowers(state.faction, false);
-            }
+            ApplyRemoveTracked(state);
             state.isActive = false;
             state.removeAtGameTime = -1.0f;
             state.armedAtGameTime = -1.0f;
@@ -186,8 +260,8 @@ namespace DisguiseManager {
         }
 
         for (auto& [formID, state] : ActiveDisguises) {
-            if (state.faction && (state.isActive || state.removeAtGameTime > 0.0f || state.armedAtGameTime > 0.0f)) {
-                ApplyToPlayerAndFollowers(state.faction, false);
+            if (state.faction && (state.isActive || state.removeAtGameTime > 0.0f || state.armedAtGameTime > 0.0f || !state.appliedActors.empty())) {
+                ApplyRemoveTracked(state);
             }
             state.isActive = false;
             state.removeAtGameTime = -1.0f;
@@ -286,19 +360,23 @@ namespace DisguiseManager {
                 const bool needApply = !state.isActive || !player->IsInFaction(n.faction) || state.appliedRank != n.bestRank;
 
                 if (needApply) {
-                    ApplyToPlayerAndFollowers(n.faction, true, n.bestRank);
+                    ApplyAdd(state, n.faction, n.bestRank);
                     state.isActive = true;
                     state.appliedRank = n.bestRank;
+                } else {
+                    // Still active — clean dismissed followers + sync new ones
+                    CleanupDismissedFollowers(state);
+                    SyncCurrentFollowers(state, n.bestRank);
                 }
             } else {
                 ClearArmedTimer(state);
 
                 if (isLoadEvaluation) {
-                    if (player->IsInFaction(n.faction)) {
+                    if (player->IsInFaction(n.faction) || !state.appliedActors.empty()) {
                         if (Configuration::DebugMode) {
                             logger::info("  → Load evaluation: condition not met → removing faction immediately");
                         }
-                        ApplyToPlayerAndFollowers(n.faction, false);
+                        ApplyRemoveTracked(state);
                     }
                     state.isActive = false;
                     state.removeAtGameTime = -1.0f;
@@ -341,11 +419,8 @@ namespace DisguiseManager {
             if (npc->IsDead()) continue;
             if (npc->IsPlayerTeammate()) continue;
             if (!npc->IsInFaction(faction)) continue;
-
-            // NPC must not be in combat
             if (npc->IsInCombat()) continue;
 
-            // NPC must see the player
             bool losExtra = false;
             if (!npc->HasLineOfSight(player, losExtra)) continue;
 
@@ -387,7 +462,15 @@ namespace DisguiseManager {
             }
         }
 
-        // ----- Removal timeout -----
+        // Cleanup dismissed followers even while disguise stays active
+        for (auto& [formID, state] : ActiveDisguises) {
+            if (state.isActive) {
+                CleanupDismissedFollowers(state);
+                SyncCurrentFollowers(state, state.appliedRank);
+            }
+        }
+
+        // Removal timeout
         std::vector<RE::FormID> removalExpired;
         for (auto& [formID, state] : ActiveDisguises) {
             if (state.isActive && state.removeAtGameTime > 0.0f && now >= state.removeAtGameTime) {
@@ -401,7 +484,7 @@ namespace DisguiseManager {
             RemoveFactionAndLinked(id);
         }
 
-        // ----- Armed timer -----
+        // Armed timer
         if (!Configuration::EnableArmedTimer || !player) {
             for (auto& [formID, state] : ActiveDisguises) {
                 ClearArmedTimer(state);
@@ -420,13 +503,11 @@ namespace DisguiseManager {
                 continue;
             }
 
-            // Timeout already running → no armed timer
             if (state.removeAtGameTime > 0.0f) {
                 ClearArmedTimer(state);
                 continue;
             }
 
-            // Player in combat or weapons sheathed → cancel
             if (playerInCombat || !weaponDrawn) {
                 ClearArmedTimer(state);
                 continue;
@@ -525,9 +606,7 @@ namespace DisguiseManager {
 
             for (auto id : toRemove) {
                 auto& state = ActiveDisguises[id];
-                if (state.faction) {
-                    ApplyToPlayerAndFollowers(state.faction, false);
-                }
+                ApplyRemoveTracked(state);
                 state.isActive = false;
                 state.removeAtGameTime = -1.0f;
                 state.armedAtGameTime = -1.0f;
