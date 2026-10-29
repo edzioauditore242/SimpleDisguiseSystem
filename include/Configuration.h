@@ -22,8 +22,11 @@ namespace Configuration {
     inline bool FollowerSupport = true;
     inline bool DebugMode = false;
 
-    inline bool EnableArmedTimer = false;
-    inline float ArmedTimerDuration = 5.0f;
+    // Unified suspicion timer (detection-based)
+    inline bool EnableSuspicionTimer = false;
+    inline float SuspicionTimerDuration = 5.0f;
+    inline bool SuspicionWeaponDrawn = true;  // count weapon drawn
+    inline bool SuspicionSneaking = true;     // count sneaking
 
     inline std::vector<DisguiseEntry> DisguiseEntries;
     inline std::filesystem::path IniPath;

@@ -57,6 +57,28 @@ namespace DisguiseManager {
         return false;
     }
 
+    static bool IsPlayerSneaking(RE::Actor* actor) { return actor && actor->IsSneaking(); }
+
+    // Game detection (sneak, light, invisibility, etc.)
+    static bool IsDetectedByNpc(RE::Actor* npc, RE::Actor* player) {
+        if (!npc || !player) return false;
+        const std::int32_t level = npc->RequestDetectionLevel(player, RE::DETECTION_PRIORITY::kNormal);
+        return level > 0;
+    }
+
+    // Player matches at least one enabled suspicion stance
+    static bool MatchesSuspicionStance(RE::Actor* player) {
+        if (!player) return false;
+
+        if (Configuration::SuspicionWeaponDrawn && IsWeaponDrawn(player)) {
+            return true;
+        }
+        if (Configuration::SuspicionSneaking && IsPlayerSneaking(player)) {
+            return true;
+        }
+        return false;
+    }
+
     static int CountWornKeywords(RE::Actor* actor, const std::vector<std::string>& required) {
         if (!actor || required.empty()) return 0;
 
@@ -208,11 +230,11 @@ namespace DisguiseManager {
         }
     }
 
-    static void ClearArmedTimer(ActiveDisguise& state) {
-        if (state.armedAtGameTime > 0.0f && Configuration::DebugMode) {
-            logger::info("Armed timer cancelled for {}", GetFactionLabel(state.faction));
+    static void ClearSuspicionTimer(ActiveDisguise& state) {
+        if (state.suspicionAtGameTime > 0.0f && Configuration::DebugMode) {
+            logger::info("Suspicion timer cancelled for {}", GetFactionLabel(state.faction));
         }
-        state.armedAtGameTime = -1.0f;
+        state.suspicionAtGameTime = -1.0f;
     }
 
     static void RemoveFactionAndLinked(RE::FormID triggerId) {
@@ -243,7 +265,7 @@ namespace DisguiseManager {
             ApplyRemoveTracked(state);
             state.isActive = false;
             state.removeAtGameTime = -1.0f;
-            state.armedAtGameTime = -1.0f;
+            state.suspicionAtGameTime = -1.0f;
             state.appliedRank = 0;
         }
     }
@@ -254,12 +276,12 @@ namespace DisguiseManager {
         }
 
         for (auto& [formID, state] : ActiveDisguises) {
-            if (state.faction && (state.isActive || state.removeAtGameTime > 0.0f || state.armedAtGameTime > 0.0f || !state.appliedActors.empty())) {
+            if (state.faction && (state.isActive || state.removeAtGameTime > 0.0f || state.suspicionAtGameTime > 0.0f || !state.appliedActors.empty())) {
                 ApplyRemoveTracked(state);
             }
             state.isActive = false;
             state.removeAtGameTime = -1.0f;
-            state.armedAtGameTime = -1.0f;
+            state.suspicionAtGameTime = -1.0f;
             state.appliedRank = 0;
         }
     }
@@ -339,8 +361,8 @@ namespace DisguiseManager {
             state.faction = n.faction;
 
             if (Configuration::DebugMode) {
-                logger::info("Faction: {} | Best Worn: {}/{} | Condition: {} | Active: {} | Timer: {} | Armed: {} | Rank: {}", n.editorID, n.bestWorn, n.bestRequired, n.needed, state.isActive, state.removeAtGameTime > 0.0f ? "YES" : "no",
-                             state.armedAtGameTime > 0.0f ? "YES" : "no", n.needed ? n.bestRank : state.appliedRank);
+                logger::info("Faction: {} | Best Worn: {}/{} | Condition: {} | Active: {} | Timer: {} | Suspicion: {} | Rank: {}", n.editorID, n.bestWorn, n.bestRequired, n.needed, state.isActive,
+                             state.removeAtGameTime > 0.0f ? "YES" : "no", state.suspicionAtGameTime > 0.0f ? "YES" : "no", n.needed ? n.bestRank : state.appliedRank);
             }
 
             if (n.needed) {
@@ -362,7 +384,7 @@ namespace DisguiseManager {
                     SyncCurrentFollowers(state, n.bestRank);
                 }
             } else {
-                ClearArmedTimer(state);
+                ClearSuspicionTimer(state);
 
                 if (isLoadEvaluation) {
                     if (Configuration::DebugMode) {
@@ -387,7 +409,7 @@ namespace DisguiseManager {
 
                     state.isActive = false;
                     state.removeAtGameTime = -1.0f;
-                    state.armedAtGameTime = -1.0f;
+                    state.suspicionAtGameTime = -1.0f;
                     state.appliedRank = 0;
                 } else {
                     if (state.isActive && state.removeAtGameTime < 0.0f) {
@@ -415,7 +437,8 @@ namespace DisguiseManager {
         Evaluate(false);
     }
 
-    static bool HasArmedWatcher(RE::Actor* player, RE::TESFaction* faction) {
+    // Peaceful faction NPC has detected the player (no LOS-only check)
+    static bool HasDetectedWatcher(RE::Actor* player, RE::TESFaction* faction) {
         if (!player || !faction) return false;
 
         auto processLists = RE::ProcessLists::GetSingleton();
@@ -429,8 +452,7 @@ namespace DisguiseManager {
             if (!npc->IsInFaction(faction)) continue;
             if (npc->IsInCombat()) continue;
 
-            bool losExtra = false;
-            if (!npc->HasLineOfSight(player, losExtra)) continue;
+            if (!IsDetectedByNpc(npc.get(), player)) continue;
 
             return true;
         }
@@ -490,54 +512,53 @@ namespace DisguiseManager {
             RemoveFactionAndLinked(id);
         }
 
-        if (!Configuration::EnableArmedTimer || !player) {
+        // ----- Unified suspicion timer (detection + stance) -----
+        if (!Configuration::EnableSuspicionTimer || !player) {
             for (auto& [formID, state] : ActiveDisguises) {
-                ClearArmedTimer(state);
+                ClearSuspicionTimer(state);
             }
             return;
         }
 
         const bool playerInCombat = player->IsInCombat();
-        const bool weaponDrawn = IsWeaponDrawn(player);
+        const bool stanceOk = MatchesSuspicionStance(player);
 
-        std::vector<RE::FormID> armedExpired;
+        std::vector<RE::FormID> suspicionExpired;
 
         for (auto& [formID, state] : ActiveDisguises) {
             if (!state.isActive || !state.faction) {
-                ClearArmedTimer(state);
+                ClearSuspicionTimer(state);
                 continue;
             }
 
             if (state.removeAtGameTime > 0.0f) {
-                ClearArmedTimer(state);
+                ClearSuspicionTimer(state);
                 continue;
             }
 
-            if (playerInCombat || !weaponDrawn) {
-                ClearArmedTimer(state);
+            if (playerInCombat || !stanceOk) {
+                ClearSuspicionTimer(state);
                 continue;
             }
 
-            const bool watched = HasArmedWatcher(player, state.faction);
-
-            if (watched) {
-                if (state.armedAtGameTime < 0.0f) {
-                    const float gameDuration = RealSecondsToGameSeconds(Configuration::ArmedTimerDuration);
-                    state.armedAtGameTime = now + gameDuration;
+            if (HasDetectedWatcher(player, state.faction)) {
+                if (state.suspicionAtGameTime < 0.0f) {
+                    const float gameDuration = RealSecondsToGameSeconds(Configuration::SuspicionTimerDuration);
+                    state.suspicionAtGameTime = now + gameDuration;
                     if (Configuration::DebugMode) {
-                        logger::info("Armed timer started for {} ({:.0f} real sec ≈ {:.0f} game sec)", GetFactionLabel(state.faction), Configuration::ArmedTimerDuration, gameDuration);
+                        logger::info("Suspicion timer started for {} ({:.0f} real sec ≈ {:.0f} game sec) — detected + stance", GetFactionLabel(state.faction), Configuration::SuspicionTimerDuration, gameDuration);
                     }
-                } else if (now >= state.armedAtGameTime) {
-                    armedExpired.push_back(formID);
+                } else if (now >= state.suspicionAtGameTime) {
+                    suspicionExpired.push_back(formID);
                 }
             } else {
-                ClearArmedTimer(state);
+                ClearSuspicionTimer(state);
             }
         }
 
-        for (auto id : armedExpired) {
+        for (auto id : suspicionExpired) {
             if (Configuration::DebugMode) {
-                logger::info("Armed timer expired → removing faction (and linked)");
+                logger::info("Suspicion timer expired → removing faction (and linked)");
             }
             RemoveFactionAndLinked(id);
         }
@@ -614,7 +635,7 @@ namespace DisguiseManager {
                 ApplyRemoveTracked(state);
                 state.isActive = false;
                 state.removeAtGameTime = -1.0f;
-                state.armedAtGameTime = -1.0f;
+                state.suspicionAtGameTime = -1.0f;
                 state.appliedRank = 0;
             }
 

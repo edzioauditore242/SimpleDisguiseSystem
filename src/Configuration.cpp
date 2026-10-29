@@ -129,6 +129,13 @@ namespace Configuration {
         std::string line;
         std::string currentSection;
 
+        // Legacy keys (optional migration)
+        bool legacyArmedEnable = false;
+        bool legacySneakEnable = false;
+        float legacyArmedDur = -1.0f;
+        float legacySneakDur = -1.0f;
+        bool sawNewSuspicion = false;
+
         while (std::getline(file, line)) {
             if (!line.empty() && static_cast<unsigned char>(line[0]) == 0xEF) {
                 line.erase(0, 3);
@@ -171,17 +178,65 @@ namespace Configuration {
             } else if (key == "DebugMode") {
                 DebugMode = toBool(value);
                 logger::info("DebugMode = {}", DebugMode);
-            } else if (key == "EnableArmedTimer") {
-                EnableArmedTimer = toBool(value);
-                logger::info("EnableArmedTimer = {}", EnableArmedTimer);
+            }
+            // --- New unified suspicion ---
+            else if (key == "EnableSuspicionTimer") {
+                EnableSuspicionTimer = toBool(value);
+                sawNewSuspicion = true;
+                logger::info("EnableSuspicionTimer = {}", EnableSuspicionTimer);
+            } else if (key == "SuspicionTimer") {
+                try {
+                    SuspicionTimerDuration = std::stof(value);
+                    sawNewSuspicion = true;
+                    logger::info("SuspicionTimer = {:.1f} real seconds", SuspicionTimerDuration);
+                } catch (...) {
+                    logger::error("Invalid SuspicionTimer value");
+                }
+            } else if (key == "SuspicionWeaponDrawn") {
+                SuspicionWeaponDrawn = toBool(value);
+                sawNewSuspicion = true;
+                logger::info("SuspicionWeaponDrawn = {}", SuspicionWeaponDrawn);
+            } else if (key == "SuspicionSneaking") {
+                SuspicionSneaking = toBool(value);
+                sawNewSuspicion = true;
+                logger::info("SuspicionSneaking = {}", SuspicionSneaking);
+            }
+            // --- Legacy (Armed / Sneak) → migrate if new keys missing ---
+            else if (key == "EnableArmedTimer") {
+                legacyArmedEnable = toBool(value);
             } else if (key == "ArmedTimer") {
                 try {
-                    ArmedTimerDuration = std::stof(value);
-                    logger::info("ArmedTimer = {:.1f} real seconds", ArmedTimerDuration);
+                    legacyArmedDur = std::stof(value);
                 } catch (...) {
-                    logger::error("Invalid ArmedTimer value");
+                }
+            } else if (key == "EnableSneakTimer") {
+                legacySneakEnable = toBool(value);
+            } else if (key == "SneakTimer") {
+                try {
+                    legacySneakDur = std::stof(value);
+                } catch (...) {
                 }
             }
+        }
+
+        if (!sawNewSuspicion && (legacyArmedEnable || legacySneakEnable)) {
+            EnableSuspicionTimer = true;
+            SuspicionWeaponDrawn = legacyArmedEnable;
+            SuspicionSneaking = legacySneakEnable;
+            float dur = 5.0f;
+            if (legacyArmedDur > 0.0f && legacySneakDur > 0.0f) {
+                dur = (std::max)(legacyArmedDur, legacySneakDur);
+            } else if (legacyArmedDur > 0.0f) {
+                dur = legacyArmedDur;
+            } else if (legacySneakDur > 0.0f) {
+                dur = legacySneakDur;
+            }
+            SuspicionTimerDuration = dur;
+            logger::info("Migrated legacy Armed/Sneak settings → Suspicion timer");
+            logger::info("EnableSuspicionTimer = {}", EnableSuspicionTimer);
+            logger::info("SuspicionWeaponDrawn = {}", SuspicionWeaponDrawn);
+            logger::info("SuspicionSneaking = {}", SuspicionSneaking);
+            logger::info("SuspicionTimer = {:.1f}", SuspicionTimerDuration);
         }
     }
 
@@ -201,8 +256,10 @@ namespace Configuration {
                 out << "TimeoutDuration = 120\n";
                 out << "FollowerSupport = true\n";
                 out << "DebugMode = false\n";
-                out << "EnableArmedTimer = false\n";
-                out << "ArmedTimer = 5\n\n";
+                out << "EnableSuspicionTimer = false\n";
+                out << "SuspicionTimer = 5\n";
+                out << "SuspicionWeaponDrawn = true\n";
+                out << "SuspicionSneaking = true\n\n";
                 out << "[Disguise]\n";
                 out << "; Format: Keyword1,Keyword2|FactionEditorID\n";
                 out << "; Format: Keyword1,Keyword2|Faction1,Faction2\n";

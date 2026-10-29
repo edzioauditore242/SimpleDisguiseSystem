@@ -28,8 +28,10 @@ namespace UI {
         bool timeoutWritten = false;
         bool followerWritten = false;
         bool debugWritten = false;
-        bool armedEnableWritten = false;
-        bool armedTimerWritten = false;
+        bool susEnableWritten = false;
+        bool susTimerWritten = false;
+        bool susWeaponWritten = false;
+        bool susSneakWritten = false;
 
         while (std::getline(in, line)) {
             std::string trimmed = line;
@@ -44,7 +46,13 @@ namespace UI {
             }
 
             if (inGeneral) {
-                if (trimmed.find("EnableMod") != std::string::npos && trimmed.find("EnableArmed") == std::string::npos) {
+                // Skip legacy Armed/Sneak lines (replaced by Suspicion)
+                if (trimmed.find("EnableArmedTimer") != std::string::npos || (trimmed.find("ArmedTimer") != std::string::npos && trimmed.find("EnableArmed") == std::string::npos) || trimmed.find("EnableSneakTimer") != std::string::npos ||
+                    (trimmed.find("SneakTimer") != std::string::npos && trimmed.find("EnableSneak") == std::string::npos && trimmed.find("Suspicion") == std::string::npos)) {
+                    continue;
+                }
+
+                if (trimmed.find("EnableMod") != std::string::npos && trimmed.find("EnableSuspicion") == std::string::npos) {
                     buffer << "EnableMod = " << (Configuration::EnableMod ? "true" : "false") << "\n";
                     enableWritten = true;
                     continue;
@@ -64,14 +72,24 @@ namespace UI {
                     debugWritten = true;
                     continue;
                 }
-                if (trimmed.find("EnableArmedTimer") != std::string::npos) {
-                    buffer << "EnableArmedTimer = " << (Configuration::EnableArmedTimer ? "true" : "false") << "\n";
-                    armedEnableWritten = true;
+                if (trimmed.find("EnableSuspicionTimer") != std::string::npos) {
+                    buffer << "EnableSuspicionTimer = " << (Configuration::EnableSuspicionTimer ? "true" : "false") << "\n";
+                    susEnableWritten = true;
                     continue;
                 }
-                if (trimmed.find("ArmedTimer") != std::string::npos && trimmed.find("EnableArmed") == std::string::npos) {
-                    buffer << "ArmedTimer = " << Configuration::ArmedTimerDuration << "\n";
-                    armedTimerWritten = true;
+                if (trimmed.find("SuspicionTimer") != std::string::npos && trimmed.find("EnableSuspicion") == std::string::npos) {
+                    buffer << "SuspicionTimer = " << Configuration::SuspicionTimerDuration << "\n";
+                    susTimerWritten = true;
+                    continue;
+                }
+                if (trimmed.find("SuspicionWeaponDrawn") != std::string::npos) {
+                    buffer << "SuspicionWeaponDrawn = " << (Configuration::SuspicionWeaponDrawn ? "true" : "false") << "\n";
+                    susWeaponWritten = true;
+                    continue;
+                }
+                if (trimmed.find("SuspicionSneaking") != std::string::npos) {
+                    buffer << "SuspicionSneaking = " << (Configuration::SuspicionSneaking ? "true" : "false") << "\n";
+                    susSneakWritten = true;
                     continue;
                 }
             }
@@ -80,14 +98,16 @@ namespace UI {
         }
         in.close();
 
-        if (!enableWritten || !timeoutWritten || !followerWritten || !debugWritten || !armedEnableWritten || !armedTimerWritten) {
+        if (!enableWritten || !timeoutWritten || !followerWritten || !debugWritten || !susEnableWritten || !susTimerWritten || !susWeaponWritten || !susSneakWritten) {
             buffer << "\n[General]\n";
             if (!enableWritten) buffer << "EnableMod = " << (Configuration::EnableMod ? "true" : "false") << "\n";
             if (!timeoutWritten) buffer << "TimeoutDuration = " << Configuration::TimeoutDuration << "\n";
             if (!followerWritten) buffer << "FollowerSupport = " << (Configuration::FollowerSupport ? "true" : "false") << "\n";
             if (!debugWritten) buffer << "DebugMode = " << (Configuration::DebugMode ? "true" : "false") << "\n";
-            if (!armedEnableWritten) buffer << "EnableArmedTimer = " << (Configuration::EnableArmedTimer ? "true" : "false") << "\n";
-            if (!armedTimerWritten) buffer << "ArmedTimer = " << Configuration::ArmedTimerDuration << "\n";
+            if (!susEnableWritten) buffer << "EnableSuspicionTimer = " << (Configuration::EnableSuspicionTimer ? "true" : "false") << "\n";
+            if (!susTimerWritten) buffer << "SuspicionTimer = " << Configuration::SuspicionTimerDuration << "\n";
+            if (!susWeaponWritten) buffer << "SuspicionWeaponDrawn = " << (Configuration::SuspicionWeaponDrawn ? "true" : "false") << "\n";
+            if (!susSneakWritten) buffer << "SuspicionSneaking = " << (Configuration::SuspicionSneaking ? "true" : "false") << "\n";
         }
 
         std::ofstream out(Configuration::IniPath);
@@ -143,17 +163,30 @@ namespace UI {
         ImGuiMCP::Separator();
         ImGuiMCP::Spacing();
 
-        bool armed = Configuration::EnableArmedTimer;
-        if (ImGuiMCP::Checkbox(Translation::Get("Settings_EnableArmedTimer"), &armed)) {
-            Configuration::EnableArmedTimer = armed;
-            if (!armed) {
-                // Clear armed timers by running update path
+        ImGuiMCP::Text("%s", Translation::Get("Settings_SuspicionHeader"));
+
+        bool sus = Configuration::EnableSuspicionTimer;
+        if (ImGuiMCP::Checkbox(Translation::Get("Settings_EnableSuspicionTimer"), &sus)) {
+            Configuration::EnableSuspicionTimer = sus;
+            if (!sus) {
                 DisguiseManager::UpdateTimers();
             }
         }
 
-        ImGuiMCP::Text("%s", Translation::Get("Settings_ArmedTimer"));
-        ImGuiMCP::SliderFloat("##ArmedTimer", &Configuration::ArmedTimerDuration, 1.0f, 60.0f, "%.0f");
+        ImGuiMCP::Text("%s", Translation::Get("Settings_SuspicionTimer"));
+        ImGuiMCP::SliderFloat("##SuspicionTimer", &Configuration::SuspicionTimerDuration, 1.0f, 60.0f, "%.0f");
+
+        bool weapon = Configuration::SuspicionWeaponDrawn;
+        if (ImGuiMCP::Checkbox(Translation::Get("Settings_SuspicionWeaponDrawn"), &weapon)) {
+            Configuration::SuspicionWeaponDrawn = weapon;
+            DisguiseManager::UpdateTimers();
+        }
+
+        bool sneak = Configuration::SuspicionSneaking;
+        if (ImGuiMCP::Checkbox(Translation::Get("Settings_SuspicionSneaking"), &sneak)) {
+            Configuration::SuspicionSneaking = sneak;
+            DisguiseManager::UpdateTimers();
+        }
 
         ImGuiMCP::Spacing();
         ImGuiMCP::Separator();
@@ -269,13 +302,13 @@ namespace UI {
                 auto it = DisguiseManager::ActiveDisguises.find(formID);
                 bool isActive = false;
                 bool hasTimer = false;
-                bool hasArmed = false;
+                bool hasSuspicion = false;
                 std::int8_t appliedRank = 0;
 
                 if (it != DisguiseManager::ActiveDisguises.end()) {
                     isActive = it->second.isActive;
                     hasTimer = it->second.removeAtGameTime > 0.0f;
-                    hasArmed = it->second.armedAtGameTime > 0.0f;
+                    hasSuspicion = it->second.suspicionAtGameTime > 0.0f;
                     appliedRank = it->second.appliedRank;
                 }
 
@@ -283,7 +316,7 @@ namespace UI {
                 ImGuiMCP::BulletText("%s: %s", Translation::Get("Debug_InFaction"), inFaction ? "YES" : "no");
                 ImGuiMCP::BulletText("%s: %s", Translation::Get("Debug_Timer"), hasTimer ? "YES" : "no");
                 ImGuiMCP::BulletText("%s: %d", Translation::Get("Debug_Rank"), static_cast<int>(appliedRank));
-                ImGuiMCP::BulletText("%s: %s", Translation::Get("Debug_ArmedTimer"), hasArmed ? "YES" : "no");
+                ImGuiMCP::BulletText("%s: %s", Translation::Get("Debug_SuspicionTimer"), hasSuspicion ? "YES" : "no");
                 ImGuiMCP::BulletText("%s: %s", Translation::Get("Debug_ModActive"), isActive ? "YES" : "no");
                 ImGuiMCP::Separator();
             }
